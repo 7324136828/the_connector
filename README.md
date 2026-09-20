@@ -134,6 +134,10 @@ The configuration editor exposes an effort selector for each supported route, in
 
 Messages render Markdown headings, emphasis, lists, tables, quotes, task lists, and code. Code blocks preserve whitespace and include copy controls. Raw HTML is disabled and unsafe link schemes are filtered. Sessions can be exported as ZIP files containing Markdown and JSON transcripts plus metadata.
 
+[![The Connector chat interface showing saved sessions, a conversation, and provider and model details](images/chat_support.png)](images/chat_support.png)
+
+*Chatting through The Connector. This capture shows an earlier version of the interface.*
+
 ## Configuration library
 
 A saved configuration has a display `name`, a unique stable `model_id`, a routing `config`, an `active` flag (default `true`), and optional `description` and `context_length` metadata. The database-generated `id` identifies its management record; the chosen `model_id` identifies it in completion requests. Model IDs must start with a letter or digit, contain only letters, digits, `.`, `_`, or `-`, and be at most 100 characters. A saved `model_id` cannot be renamed.
@@ -307,6 +311,10 @@ The archive supplies older messages from that session and, with the default `mem
 Setting `past_memory: false` disables retrieval for that session and excludes that session as a source for other conversations. Its transcript is still saved. Setting `memory_scope: "session"` restricts retrieval to the current session's own history.
 
 Memory is scoped to this application's local database, which is intended for a single user. There is no per-account separation. **Close session** archives the conversation and clears temporary files; it does not erase its stored messages. Closed sessions can still contribute memory when enabled and remain accessible by session ID for viewing or export.
+
+[![Past Memory enabled while the assistant summarizes topics from earlier conversation](images/memory_support.png)](images/memory_support.png)
+
+*Recalling earlier conversation topics with Past Memory enabled.*
 
 ## Web session and application API
 
@@ -570,13 +578,17 @@ model:
 
 Use a real route with at least **64,000 tokens** of usable context for Hermes, as its [local-provider guide](https://hermes-agent.nousresearch.com/docs/integrations/providers) specifies. Declare the verified minimum across routes in the saved entry's `context_length`; do not enlarge metadata to hide an upstream limit. If capacity is unknown, determine it from the serving provider before setting an override. A mock entry is useful for connectivity and SDK tests only.
 
+[![Agent creating a Python sample project, with the generated main.py visible beside File Explorer](images/hermes_agent_support.png)](images/hermes_agent_support.png)
+
+*Hermes Agent example: creating a Python project using the selected configuration.*
+
 ### Windows and WSL connectivity
 
 If Hermes and the backend both run in WSL, the loopback URL works. For a Windows backend and Hermes in WSL, test `curl http://127.0.0.1:8301/v1/models` from WSL first. With NAT networking, start Windows with `run_backend.bat --host 0.0.0.0`, find its gateway address using `ip route show default` in WSL, and use `http://<windows-host-ip>:8301/v1`. Windows firewall access must permit that connection. Mirrored networking can preserve loopback access; see [Hermes's WSL networking guide](https://hermes-agent.nousresearch.com/docs/integrations/providers#wsl2-networking-windows-users).
 
 Binding to `0.0.0.0` exposes this unauthenticated local API on available interfaces. Restrict access to the intended host/WSL connection. Use an actual hostname or IP in client URLs, never `0.0.0.0`.
 
-If the picker is empty, confirm the backend is reachable and the library entry is active. If a chat fails with 400, inspect the unsupported-option message; provider-specific settings may not apply to every fallback route. Effort changes belong in the saved configuration. Compatibility is covered by offline transport/SDK tests; a real Hermes session and paid upstream providers are not exercised by those tests.
+If the picker is empty, confirm the backend is reachable and the library entry is active. If a chat fails with 400, inspect the unsupported-option message; provider-specific settings may not apply to every fallback route. Effort changes belong in the saved configuration. Automated compatibility tests use simulated providers and SDK clients; they do not launch Hermes or call paid upstream services.
 
 ## Tests
 

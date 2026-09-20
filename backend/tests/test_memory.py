@@ -3,12 +3,13 @@
 import json
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone
 from threading import Event
 
 import pytest
 
 from backend.app.schemas.chat import NewSessionRequest
-from backend.app.services.session_manager import ARCHIVE_MAX_CHARS, SessionManager
+from backend.app.services.session_manager import ARCHIVE_MAX_CHARS, SUMMARY_MAX_WORDS, SessionManager
 
 
 @pytest.fixture
@@ -124,6 +125,95 @@ def test_archive_has_encoded_size_limit_and_cannot_forge_delimiters(manager):
     assert archive
     assert all(len(item["content"]) <= 4_000 for item in archive)
     assert all(len(item["session_title"]) <= 200 for item in archive)
+
+
+def test_daily_memory_uses_today_first_and_compacts_prior_days_with_llm(manager):
+    source = create(manager, title="Daily facts")
+    today_message = manager.add_message(source, "user", "Today I chose the green design.")
+    yesterday_message = manager.add_message(source, "assistant", "Yesterday we approved the launch plan.")
+    yesterday = datetime.now(timezone.utc) - timedelta(days=1)
+    with manager._get_conn() as conn:
+        conn.execute(
+            "UPDATE messages SET created_at = ? WHERE id = ?",
+            (yesterday.isoformat(), yesterday_message.id),
+        )
+    completion = {
+        "id": "chatcmpl-yesterday", "object": "chat.completion",
+        "created": int(yesterday.timestamp()), "model": "saved-model",
+        "choices": [{"index": 0, "message": {"role": "assistant", "content": "The API response selected option B."},
+                     "finish_reason": "stop"}],
+        "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+    }
+    manager.record_completion_response(completion)
+    current = create(manager)
+    calls = []
+
+    def summarize(source_text):
+        calls.append(source_text)
+        return " ".join(f"word{i}" for i in range(250))
+
+    cfg = manager.get_session(current).config
+    manager._refresh_daily_summaries(cfg, current, summarizer=summarize)
+    archive = archive_from(manager.get_context_window(current)[1])
+
+    assert len(calls) == 1
+    assert "approved the launch plan" in calls[0]
+    assert "API response selected option B" in calls[0]
+    assert archive[0]["message_id"] == today_message.id
+    assert archive[0]["source"] == "message"
+    assert archive[1]["source"] == "daily_summary"
+    assert len(archive[1]["content"].split()) == SUMMARY_MAX_WORDS
+    with manager._get_conn() as conn:
+        row = conn.execute("SELECT * FROM memory_summary").fetchone()
+    assert row["memory_date"] == yesterday.date().isoformat()
+    assert row["source_count"] == 2
+
+
+def test_daily_summary_retains_only_preceding_seven_completed_days(manager):
+    current = create(manager)
+    cfg = manager.get_session(current).config
+    today = datetime.now(timezone.utc).date()
+    with manager._get_conn() as conn:
+        for days_ago in (1, 7, 8):
+            timestamp = datetime.combine(
+                today - timedelta(days=days_ago), datetime.min.time(), tzinfo=timezone.utc
+            ).isoformat()
+            conn.execute(
+                "INSERT INTO messages (id, session_id, role, content, created_at) VALUES (?, ?, 'user', ?, ?)",
+                (f"old-{days_ago}", current, f"fact from {days_ago} days ago", timestamp),
+            )
+        conn.execute(
+            """INSERT INTO memory_summary
+               (memory_date, scope, session_id, summary, source_fingerprint, source_count, created_at, updated_at)
+               VALUES (?, 'all_sessions', '', 'expired', 'old', 1, ?, ?)""",
+            ((today - timedelta(days=8)).isoformat(), utc := datetime.now(timezone.utc).isoformat(), utc),
+        )
+    manager._refresh_daily_summaries(cfg, current, summarizer=lambda text: text)
+    with manager._get_conn() as conn:
+        rows = conn.execute("SELECT memory_date, summary FROM memory_summary ORDER BY memory_date").fetchall()
+    assert [row["memory_date"] for row in rows] == [
+        (today - timedelta(days=7)).isoformat(),
+        (today - timedelta(days=1)).isoformat(),
+    ]
+    assert all("8 days" not in row["summary"] for row in rows)
+
+
+def test_global_daily_summary_drops_memory_when_source_disables_sharing(manager):
+    source = create(manager)
+    message = manager.add_message(source, "user", "This was initially shareable.")
+    yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+    with manager._get_conn() as conn:
+        conn.execute("UPDATE messages SET created_at = ? WHERE id = ?", (yesterday, message.id))
+    recipient = create(manager)
+    cfg = manager.get_session(recipient).config
+    manager._refresh_daily_summaries(cfg, recipient, summarizer=lambda text: text)
+    with manager._get_conn() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM memory_summary").fetchone()[0] == 1
+
+    manager.update_session_config(source, config(past_memory=False))
+    manager._refresh_daily_summaries(cfg, recipient, summarizer=lambda text: text)
+    with manager._get_conn() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM memory_summary").fetchone()[0] == 0
 
 
 def test_config_snapshot_and_updates_persist_across_restart(manager):

@@ -21,6 +21,7 @@ from ..audit_context import set_audit_context
 from ..services.configuration_manager import configuration_manager
 from ..services.completion_service import completion_service, UnsupportedCompletionOption
 from ..services.connectors.common import ChatAPIError
+from ..services.session_manager import session_manager
 
 router = APIRouter(tags=["Agent compatibility"])
 
@@ -197,7 +198,8 @@ def chat_completions(req: CompletionRequest):
         "model", "messages", "stream", "stream_options", "n", "user", "metadata", "store",
     })
     try:
-        result = completion_service.complete(messages=messages, config=record["config"], options=options)
+        config = session_manager.config_with_memory(record["config"])
+        result = completion_service.complete(messages=messages, config=config, options=options)
     except UnsupportedCompletionOption as exc:
         raise CompatibilityError(400, str(exc), "unsupported_option") from exc
     except ValueError as exc:
@@ -214,6 +216,7 @@ def chat_completions(req: CompletionRequest):
         "choices": [{"index": 0, "message": message, "finish_reason": result["finish_reason"]}],
         "usage": result["usage"],
     }
+    session_manager.record_completion_response(response)
     if req.stream:
         return StreamingResponse(completion_events(response, bool((req.stream_options or {}).get("include_usage"))),
                                  media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})

@@ -26,6 +26,7 @@ def isolate_api_database(monkeypatch, tmp_path):
     manager = SessionManager(tmp_path / "sessions.db")
     monkeypatch.setattr(main.internal_audit_store, "db_path", manager.db_path)
     monkeypatch.setattr(main, "session_manager", manager)
+    monkeypatch.setattr(compatibility, "session_manager", manager)
     monkeypatch.setattr(main, "list_ollama_models", lambda *args: [])
     library = ConfigurationManager(tmp_path / "sessions.db")
     for module in (main, configurations, compatibility):

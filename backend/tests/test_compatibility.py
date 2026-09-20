@@ -1,5 +1,6 @@
 """Client-facing discovery, config aliases, SDK parsing, and agent tool loops."""
 import json
+import sqlite3
 from copy import deepcopy
 
 import pytest
@@ -86,7 +87,7 @@ def test_library_session_is_snapshot_and_inactive_configs_cannot_create_sessions
 
 
 @pytest.mark.parametrize("path", ["/v1/chat/completions", "/api/v1/chat/completions", "/api/chat/completions", "/chat/completions"])
-def test_completion_aliases_return_text_and_keep_external_history_stateless(path):
+def test_completion_aliases_return_text_without_creating_web_sessions(path):
     register()
     result = client.post(path, json={"model": "research-router", "messages": [{"role": "user", "content": "Hello"}]})
     assert result.status_code == 200, result.text
@@ -95,6 +96,37 @@ def test_completion_aliases_return_text_and_keep_external_history_stateless(path
     assert reply["choices"][0]["message"]["content"]
     assert reply["usage"]["total_tokens"] > 0
     assert client.get("/api/sessions").json() == []
+
+
+def test_completion_response_is_saved_without_the_request_and_reused_as_memory(monkeypatch):
+    register()
+    first = client.post("/v1/chat/completions", json={
+        "model": "research-router", "messages": [{"role": "user", "content": "Remember this output"}],
+    })
+    assert first.status_code == 200
+    with sqlite3.connect(main.session_manager.db_path) as conn:
+        columns = [row[1] for row in conn.execute("PRAGMA table_info(completions_response)")]
+        rows = conn.execute("SELECT id, response FROM completions_response").fetchall()
+    assert columns == ["id", "response", "created_at"]
+    assert len(rows) == 1
+    assert rows[0][0] == first.json()["id"]
+    assert json.loads(rows[0][1]) == first.json()
+
+    captured = {}
+
+    def complete(messages, config, options):
+        captured["system_prompt"] = config["system_prompt"]
+        return {"message": {"role": "assistant", "content": "Second answer"},
+                "finish_reason": "stop", "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}}
+
+    monkeypatch.setattr(compatibility.completion_service, "complete", complete)
+    second = client.post("/v1/chat/completions", json={
+        "model": "research-router", "messages": [{"role": "user", "content": "Use memory"}],
+    })
+    assert second.status_code == 200
+    assert first.json()["choices"][0]["message"]["content"] in captured["system_prompt"]
+    with sqlite3.connect(main.session_manager.db_path) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM completions_response").fetchone()[0] == 2
 
 
 def test_tool_call_round_trip_and_stream_wire_format():

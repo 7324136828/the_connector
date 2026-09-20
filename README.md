@@ -235,6 +235,8 @@ Sessions use only their saved configuration. The backend does not load the repos
 
 Routing steps run in order. A probability group selects its first candidate by relative weight, then tries the other configured choices if needed. Each route can retry before moving on. A failure across all configured routes returns an error; a mock response is available only when a mock route is explicitly configured.
 
+Each probability selection also emits an INFO message in the backend console, for example `INFO:     127.0.0.1:54321 --- probabilistic chooser chose model gpt-5-nano (provider=openai)`. This logs the initial random choice once per probability group reached, before retries or fallbacks, for both session/agent chat and compatibility completions. It is independent of file logging and database auditing; calls outside an HTTP request show `unknown` as the client address.
+
 ```json
 {
   "system_prompt": "You are a helpful assistant. Use supplied conversation context.",

@@ -19,6 +19,7 @@ import httpx
 
 from ..config import settings
 from ..audit_context import record_route_attempt
+from ..routing_logging import log_probability_choice
 from ..model_capabilities import gemini_thinking_config
 from ..schemas.configuration import normalize_config
 from .connectors import ChatAPIError, create_claude_client, create_openai_client, create_openrouter_client, estimate_tokens
@@ -215,6 +216,7 @@ class CompletionService:
             if step.get("type") == "probability":
                 choices = step["choices"]
                 index = random.choices(range(len(choices)), weights=[c["probability"] for c in choices], k=1)[0]
+                log_probability_choice(choices[index]["provider"], choices[index]["model"])
                 routes = [choices[index]] + [route for i, route in enumerate(choices) if i != index]
             else:
                 routes = [step]

@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional
 
 from ..config import settings
 from ..audit_context import record_route_attempt
+from ..routing_logging import log_probability_choice
 from ..schemas.configuration import normalize_config
 from .connectors import (
     ChatAPIError,
@@ -161,6 +162,7 @@ class Router:
                 routing_type = "probability"
                 choices = step["choices"]
                 chosen = random.choices(range(len(choices)), weights=[c["probability"] for c in choices], k=1)[0]
+                log_probability_choice(choices[chosen]["provider"], choices[chosen]["model"])
                 candidates = [choices[chosen]] + [c for i, c in enumerate(choices) if i != chosen]
             else:
                 candidates = [step]

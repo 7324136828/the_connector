@@ -13,6 +13,7 @@ from fastapi.responses import FileResponse, JSONResponse
 
 from .config import settings
 from .response_logging import LoggedFastAPI, ResponseLogWriter
+from .routing_logging import RoutingLogContextMiddleware
 from .audit_store import AuditStore
 from .schemas.chat import (
     AgentRegisterToolRequest,
@@ -72,6 +73,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(RoutingLogContextMiddleware)
 
 app.include_router(configurations_api)
 app.include_router(configuration_history_api)

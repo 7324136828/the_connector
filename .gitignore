@@ -216,3 +216,14 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# The Connector Production Ignores
+.env
+.env.*
+!.env.example
+.venv/
+node_modules/
+frontend/node_modules/
+frontend/dist/
+backend/data/*.db
+*.zip

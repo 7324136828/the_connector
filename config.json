@@ -1,0 +1,43 @@
+{
+    "sequences": [
+        {
+            "type": "probability",
+            "choices": [
+                {
+                    "model": "gpt-4o-mini",
+                    "provider": "openai",
+                    "probability": 60,
+                    "retries": 1
+                },
+                {
+                    "model": "openai/gpt-4o-mini",
+                    "provider": "openrouter",
+                    "probability": 15,
+                    "retries": 1
+                },
+                {
+                    "model": "gemini-2.5-flash",
+                    "provider": "gemini",
+                    "probability": 25,
+                    "retries": 1
+                }
+            ],
+            "retries": 2
+        },
+        {
+            "model": "claude-3-5-haiku-20241022",
+            "provider": "claude",
+            "retries": 1
+        },
+        {
+            "model": "llama3.2",
+            "provider": "ollama",
+            "retries": 0
+        },
+        {
+            "model": "mock-assistant",
+            "provider": "mock",
+            "retries": 0
+        }
+    ]
+}

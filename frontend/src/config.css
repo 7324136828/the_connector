@@ -1,0 +1,77 @@
+.chat-frame { flex: 1; min-width: 0; display: flex; flex-direction: column; height: 100%; overflow: hidden; }
+.config-summary { max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.config-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.config-button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 8px 12px; background: var(--bg-card); border: 1px solid var(--border-subtle); border-radius: 7px; color: var(--text-main); font: inherit; font-size: .82rem; cursor: pointer; text-decoration: none; }
+.config-button:hover { background: var(--bg-card-hover); }
+.config-button.primary { background: var(--accent-primary); color: #fff; font-weight: 600; }
+.config-button.primary:hover { background: var(--accent-primary-hover); }
+.config-description { color: var(--text-muted); font-size: .82rem; margin-bottom: 12px; }
+.config-filename { margin-top: 8px; overflow-wrap: anywhere; }
+.config-file-label { display: flex; flex-direction: column; gap: 6px; color: var(--text-main); font-size: .82rem; width: 100%; }
+.config-file-label input { color: var(--text-muted); font: inherit; }
+.config-file-label input::file-selector-button { border: 1px solid var(--border-subtle); background: var(--bg-input); color: var(--text-main); padding: 8px 12px; border-radius: 6px; margin-right: 10px; cursor: pointer; }
+.config-close, .app-error button { background: none; border: none; color: var(--text-muted); font-size: 1.35rem; cursor: pointer; padding: 0 5px; }
+.config-editor-label { display: block; margin: 16px 0 6px; font-size: .82rem; color: var(--text-muted); }
+.config-dialog .json-textarea { min-height: 180px; height: 230px; }
+.config-dialog .modal-footer { flex-wrap: wrap; }
+.config-error, .app-error { background: rgba(239,68,68,.12); color: #fca5a5; padding: 10px 12px; font-size: .85rem; overflow-wrap: anywhere; }
+.config-error { margin-top: 12px; border-radius: 6px; }
+.app-error { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.config-efforts { margin-top: 18px; }
+.config-efforts h3 { font-size: .9rem; margin-bottom: 6px; }
+.config-effort-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; border-top: 1px solid var(--border-subtle); padding: 10px 0; font-size: .8rem; }
+.config-effort-row label { display: flex; gap: 8px; min-width: 0; overflow-wrap: anywhere; }
+.config-route-number { color: var(--text-muted); }
+.config-effort-row select { border: 1px solid var(--border-subtle); border-radius: 5px; padding: 7px; background: var(--bg-input); color: var(--text-main); min-width: 140px; }
+.config-effort-row .config-description { margin: 0; white-space: nowrap; }
+.config-memory-note { font-size: .78rem; color: var(--text-muted); margin-top: 12px; }
+.export-link { text-decoration: none; font-size: .78rem; white-space: nowrap; }
+.response-status { font-size: .85rem; color: var(--text-muted); }
+.session-open { display: flex; flex: 1; min-width: 0; text-align: left; background: transparent; border: none; color: inherit; font: inherit; cursor: pointer; }
+.session-item:focus-within .session-actions { opacity: 1; }
+.library-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 14px; margin-bottom: 20px; }
+.library-fields label { display: flex; flex-direction: column; gap: 5px; color: var(--text-muted); font-size: .8rem; }
+.library-fields input:not([type="checkbox"]), .library-toolbar input { width: 100%; min-width: 0; border: 1px solid var(--border-subtle); padding: 8px 10px; background: var(--bg-input); color: var(--text-main); border-radius: 6px; font: inherit; }
+.library-fields .library-field-help { grid-column: 1 / -1; margin: 0; font-size: .75rem; }
+.library-fields .library-active-field { grid-column: 1 / -1; flex-direction: row; align-items: center; gap: 8px; }
+.library-toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; }
+.library-toolbar input { flex: 1; font-size: .85rem; }
+.library-toolbar button { flex-shrink: 0; }
+.library-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+.history-times { line-height: 1.65; }
+.history-routes { list-style: none; padding: 0; margin: 12px 0; font-size: .8rem; }
+.history-routes li { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-bottom: 6px; }
+.history-effort { color: var(--text-muted); }
+.history-json { margin-bottom: 14px; font-size: .8rem; }
+.history-json summary { cursor: pointer; color: var(--text-main); padding: 6px 0; }
+.history-json pre { max-height: 280px; overflow: auto; padding: 12px; background: var(--bg-input); border: 1px solid var(--border-subtle); border-radius: 6px; font-family: var(--font-mono); line-height: 1.5; }
+.library-empty { color: var(--text-muted); padding: 30px 0; font-size: .9rem; }
+.library-list { display: flex; flex-direction: column; gap: 12px; }
+.library-card { border: 1px solid var(--border-subtle); border-radius: 8px; padding: 14px; overflow-wrap: anywhere; }
+.library-card-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 6px; }
+.library-card h3 { font-size: .95rem; }
+.library-model-id { color: var(--text-muted); font-size: .78rem; margin-bottom: 8px; }
+.library-model-id code { font-family: var(--font-mono); }
+.config-button.danger { color: #fca5a5; }
+.library-delete-confirm { border-top: 1px solid var(--border-subtle); padding-top: 12px; margin-top: 12px; font-size: .8rem; color: var(--text-muted); }
+.library-delete-confirm p { margin-bottom: 8px; }
+@media (max-width: 520px) {
+  .library-fields { grid-template-columns: 1fr; }
+  .library-toolbar { flex-direction: column; align-items: stretch; }
+}
+@media (max-width: 900px) {
+  .config-summary { max-width: 190px; }
+  .chat-header { padding: 10px 12px; height: auto; min-height: 60px; gap: 8px; flex-wrap: wrap; }
+  .header-left { gap: 6px; flex-wrap: wrap; }
+}
+@media (max-width: 640px) {
+  .sidebar { width: 185px; min-width: 185px; }
+  .sidebar-header, .sidebar-controls { padding: 10px; }
+  .brand { font-size: .88rem; }
+  .welcome-screen { padding: 18px 8px; }
+  .welcome-screen .config-actions { justify-content: center; }
+  .input-section { padding: 12px 8px; }
+  .input-indicators { gap: 5px; flex-wrap: wrap; }
+  .config-summary { max-width: 145px; }
+  .config-effort-row { align-items: flex-start; flex-direction: column; }
+}

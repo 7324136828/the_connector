@@ -28,7 +28,12 @@ def test_health_and_config_download():
     assert next(m for m in models if m["id"] == "gpt-4o-mini")["effort_levels"] == []
     assert client.post("/api/config", json=MOCK_CONFIG).status_code == 404
     aliases = client.post("/api/models/capabilities", json={"provider": "openrouter", "model": "anthropic/claude-opus-4.6"})
-    assert aliases.json()["effort_levels"] == ["low", "medium", "high", "max"]
+    assert aliases.json() == {
+        "effort_levels": ["none", "minimal", "low", "medium", "high", "xhigh", "max"],
+        "default_effort": None,
+    }
+    arbitrary = client.post("/api/models/capabilities", json={"provider": "openrouter", "model": "vendor/future-model"})
+    assert arbitrary.json()["effort_levels"] == ["none", "minimal", "low", "medium", "high", "xhigh", "max"]
     snapshot = client.post("/api/models/capabilities", json={"provider": "openai", "model": "gpt-5.2-2025-12-11"})
     assert snapshot.json()["effort_levels"] == ["none", "low", "medium", "high", "xhigh"]
 
@@ -71,6 +76,19 @@ def test_config_round_trip_and_session_isolation():
     assert patched.json()["session"]["past_memory"] is False
     assert client.get(f"/api/sessions/{second}").json()["session"]["past_memory"] is True
     assert client.get(f"/api/sessions/{first}").json()["config"] == edited
+
+
+def test_openrouter_effort_is_optional_for_every_model():
+    omitted = client.post("/api/config/validate", json={
+        "sequences": [{"provider": "openrouter", "model": "vendor/future-model", "effort": None}],
+    })
+    assert omitted.status_code == 200, omitted.text
+    assert "effort" not in omitted.json()["sequences"][0]
+    explicit = client.post("/api/config/validate", json={
+        "sequences": [{"provider": "openrouter", "model": "vendor/future-model", "effort": "minimal"}],
+    })
+    assert explicit.status_code == 200, explicit.text
+    assert explicit.json()["sequences"][0]["effort"] == "minimal"
 
 
 def test_chat_and_legacy_alias():

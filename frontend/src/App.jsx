@@ -9,7 +9,6 @@ import {
   createNewSession, sendMessage, closeSession, getSessions, getSession,
   getModels, runAgent, updateSessionConfig, recordConfigLoad,
 } from './services/api';
-import './config.css';
 
 export function App() {
   const [sessions, setSessions] = useState([]);
@@ -28,6 +27,7 @@ export function App() {
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [libraryDraft, setLibraryDraft] = useState(null);
   const [toolsModalOpen, setToolsModalOpen] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const busyRef = useRef(false);
   const pastMemory = selectedConfig?.past_memory ?? true;
   const busy = loading || savingConfig;
@@ -44,8 +44,16 @@ export function App() {
     return () => { cancelled = true; };
   }, []);
 
+  useEffect(() => {
+    if (!sidebarOpen) return undefined;
+    const closeOnEscape = (event) => { if (event.key === 'Escape') setSidebarOpen(false); };
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, [sidebarOpen]);
+
   const handleNewSession = () => {
     if (busyRef.current || busy) return;
+    setSidebarOpen(false);
     setActiveSessionId(null);
     setMessages([]);
     setDraftVersion((version) => version + 1);
@@ -55,6 +63,7 @@ export function App() {
 
   const selectSession = async (sessionId) => {
     if (busyRef.current || busy) return;
+    setSidebarOpen(false);
     busyRef.current = true;
     setLoading(true);
     setError('');
@@ -185,20 +194,23 @@ export function App() {
   return (
     <div className="app-container">
       <Sidebar
+        isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)}
         sessions={sessions} activeSessionId={activeSessionId}
         onSelectSession={selectSession} onNewSession={handleNewSession}
         onCloseSession={handleCloseSession} pastMemory={pastMemory}
         onTogglePastMemory={handleTogglePastMemory} agentMode={agentMode}
-        onToggleAgentMode={setAgentMode} onOpenConfig={() => setConfigModalOpen(true)}
-        onOpenTools={() => setToolsModalOpen(true)} disabled={busy}
+        onToggleAgentMode={setAgentMode} onOpenConfig={() => { setSidebarOpen(false); setConfigModalOpen(true); }}
+        onOpenTools={() => { setSidebarOpen(false); setToolsModalOpen(true); }} disabled={busy}
         hasConfig={Boolean(selectedConfig)}
-        onOpenLibrary={() => { setLibraryDraft(null); setLibraryOpen(true); }}
+        onOpenLibrary={() => { setSidebarOpen(false); setLibraryDraft(null); setLibraryOpen(true); }}
       />
+      {sidebarOpen && <button className="sidebar-backdrop" type="button" onClick={() => setSidebarOpen(false)} aria-label="Close navigation" />}
       <div className="chat-frame">
         <ModelSelector
           config={selectedConfig} activeSessionId={activeSessionId}
           pastMemory={pastMemory} agentMode={agentMode}
           onOpenConfig={() => setConfigModalOpen(true)} disabled={busy}
+          sidebarOpen={sidebarOpen} onToggleSidebar={() => setSidebarOpen((open) => !open)}
         />
         {error && (
           <div className="app-error" role="alert">

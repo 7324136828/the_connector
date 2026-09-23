@@ -7,16 +7,16 @@ sync with the provider documentation before advertising additional levels.
 import re
 from typing import Optional
 
+OPENROUTER_EFFORT_LEVELS = ["none", "minimal", "low", "medium", "high", "xhigh", "max"]
+
 
 def effort_levels(provider: str, model: str) -> list[str]:
     provider = {"anthropic": "claude", "google": "gemini", "demo": "mock"}.get(provider, provider)
     model = re.sub(r"-\d{4}-\d{2}-\d{2}$", "", model)
     if provider == "openrouter":
-        owner, _, name = model.partition("/")
-        if owner == "anthropic":
-            # OpenRouter spells version segments with dots (claude-opus-4.6).
-            name = name.replace(".", "-")
-        return effort_levels({"anthropic": "claude", "google": "gemini"}.get(owner, owner), name)
+        # OpenRouter exposes one normalized reasoning-effort vocabulary and
+        # translates it for the selected upstream model.
+        return OPENROUTER_EFFORT_LEVELS.copy()
     if provider == "openai":
         if model in {"gpt-5", "gpt-5-mini", "gpt-5-nano"}:
             return ["minimal", "low", "medium", "high"]
@@ -45,6 +45,9 @@ def effort_levels(provider: str, model: str) -> list[str]:
 
 
 def default_effort(provider: str, model: str) -> Optional[str]:
+    if provider == "openrouter":
+        # Let OpenRouter/the upstream provider choose unless the route opts in.
+        return None
     levels = effort_levels(provider, model)
     return levels[0] if levels else None
 

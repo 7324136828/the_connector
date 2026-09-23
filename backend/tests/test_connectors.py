@@ -211,7 +211,7 @@ def test_gemini_sdk_failure_keeps_selected_effort_in_rest_fallback(monkeypatch):
     assert reply == "Fallback answer."
 
 
-@pytest.mark.parametrize("selected,expected", [(None, "minimal"), ("high", "high")])
+@pytest.mark.parametrize("selected,expected", [(None, None), ("minimal", "minimal"), ("high", "high"), ("max", "max")])
 def test_openrouter_sdk_uses_extra_body_for_reasoning(selected, expected):
     client, create = completion_client()
     reply = openrouter_connector.openrouter_chat(
@@ -219,16 +219,20 @@ def test_openrouter_sdk_uses_extra_body_for_reasoning(selected, expected):
         effort=selected, max_output_tokens=300,
     )
     options = create.call_args.kwargs
-    assert options["extra_body"] == {"reasoning": {"effort": expected}}
+    if expected is None:
+        assert "extra_body" not in options
+        assert options["temperature"] == 0.7
+    else:
+        assert options["extra_body"] == {"reasoning": {"effort": expected}}
+        assert "temperature" not in options
     assert "reasoning" not in options
     assert "reasoning_effort" not in options
-    assert "temperature" not in options
     assert options["max_tokens"] == 300
     assert options["messages"] == [{"role": "system", "content": SYSTEM}, *MESSAGES]
     assert reply == "The number is 42."
 
 
-@pytest.mark.parametrize("selected,expected", [(None, "low"), ("high", "high")])
+@pytest.mark.parametrize("selected,expected", [(None, None), ("minimal", "minimal"), ("high", "high")])
 def test_openrouter_rest_uses_reasoning_payload(monkeypatch, selected, expected):
     calls = capture_http(monkeypatch, openrouter_connector, {
         "choices": [{"message": {"content": "  42.  "}}],
@@ -243,9 +247,13 @@ def test_openrouter_rest_uses_reasoning_payload(monkeypatch, selected, expected)
     request, payload, timeout = calls[0]
     assert request.full_url == "https://openrouter.ai/api/v1/chat/completions"
     assert request.get_header("Authorization") == "Bearer unit-test-openrouter-key"
-    assert payload["reasoning"] == {"effort": expected}
+    if expected is None:
+        assert "reasoning" not in payload
+        assert payload["temperature"] == 0.7
+    else:
+        assert payload["reasoning"] == {"effort": expected}
+        assert "temperature" not in payload
     assert "extra_body" not in payload
-    assert "temperature" not in payload
     assert payload["messages"] == [{"role": "system", "content": SYSTEM}, *MESSAGES]
     assert payload["max_tokens"] == 300
     assert timeout == 15
@@ -285,8 +293,7 @@ def test_ollama_uses_top_level_think_for_supported_model(monkeypatch, selected, 
     (claude_connector.claude_chat, "claude-sonnet-4-6", "max"),
     (gemini_connector.gemini_chat, "gemini-2.0-flash", "high"),
     (gemini_connector.gemini_chat, "gemini-2.5-pro", "none"),
-    (openrouter_connector.openrouter_chat, "openai/gpt-4o-mini", "high"),
-    (openrouter_connector.openrouter_chat, "openai/gpt-5-mini", "max"),
+    (openrouter_connector.openrouter_chat, "openai/gpt-5-mini", "easy"),
     (ollama_connector.ollama_chat, "llama3.2", "high"),
     (ollama_connector.ollama_chat, "gpt-oss:20b", "none"),
 ])

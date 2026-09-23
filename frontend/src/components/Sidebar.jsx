@@ -1,12 +1,13 @@
 ﻿import React from 'react';
 
 export function Sidebar({
+  isOpen, onClose,
   sessions, activeSessionId, onSelectSession, onNewSession, onCloseSession,
   pastMemory, onTogglePastMemory, agentMode, onToggleAgentMode,
   onOpenConfig, onOpenTools, onOpenLibrary, disabled, hasConfig,
 }) {
   return (
-    <aside className="sidebar" aria-label="Chat sessions and settings">
+    <aside className={'sidebar' + (isOpen ? ' sidebar-open' : '')} aria-label="Chat sessions and settings">
       <div className="sidebar-header">
         <div className="brand-row">
           <div className="brand">
@@ -17,6 +18,7 @@ export function Sidebar({
             </svg>
             <span>The Connector</span>
           </div>
+          <button className="mobile-sidebar-close" type="button" onClick={onClose} aria-label="Close navigation">×</button>
         </div>
         <button className="btn-new-chat" onClick={onNewSession} disabled={disabled}>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" aria-hidden="true">

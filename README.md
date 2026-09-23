@@ -285,7 +285,7 @@ Only `sequences` is required at the top level. It must contain 1-30 steps; proba
 
 ### Model effort
 
-Omitting `effort` selects the lowest supported level. There is no universal `easy` value. The capability registry in [model_capabilities.py](backend/app/model_capabilities.py) defines the levels the application currently supports; models without a registered effort control remain usable with the field omitted. Unsupported settings are rejected before a provider call.
+Omitting `effort` selects the lowest supported level for providers with a registered model-specific default. OpenRouter is the exception: omitting `effort` or setting it to `null` sends no reasoning-effort override, leaving the choice to OpenRouter and the upstream provider. There is no universal `easy` value. The capability registry in [model_capabilities.py](backend/app/model_capabilities.py) defines the levels the application currently supports; models without a registered effort control remain usable with the field omitted. Unsupported settings are rejected before a provider call.
 
 The following examples show the provider mappings. Query `/api/models/capabilities` for a particular model or version.
 
@@ -297,7 +297,7 @@ The following examples show the provider mappings. Query `/api/models/capabiliti
 | Claude Opus 4.6 | `low`, `medium`, `high`, `max` | `output_config.effort` |
 | Gemini 2.5 Flash / Flash-Lite | `none`, `low`, `medium`, `high` | SDK `thinking_config.thinking_budget`; REST `thinkingConfig.thinkingBudget`. [Gemini documentation](https://ai.google.dev/gemini-api/docs/thinking) |
 | Gemini 2.5 Pro | `low`, `medium`, `high` | Same Gemini budget fields |
-| OpenRouter | Levels of the registered underlying model | `reasoning.effort`, carried through `extra_body` in the OpenAI SDK. [OpenRouter documentation](https://openrouter.ai/docs/guides/best-practices/reasoning-tokens) |
+| OpenRouter (any model) | `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max` | `reasoning.effort`, carried through `extra_body` in the OpenAI SDK; `null` omits `reasoning` entirely. [OpenRouter documentation](https://openrouter.ai/docs/guides/best-practices/reasoning-tokens) |
 | Ollama `gpt-oss` (including model tags) | `low`, `medium`, `high` | Top-level `think`. [Ollama documentation](https://docs.ollama.com/capabilities/thinking) |
 
 For Gemini 2.5, this application's named levels map to token budgets: `none` = 0, `low` = 1,024, `medium` = 8,192, and `high` = 24,576. These are application presets for the provider's budget control. Flash models default to `none`; Pro defaults to `low`.

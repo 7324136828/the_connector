@@ -185,7 +185,7 @@ export function ConfigModal({ isOpen, onClose, onConfigSaved, config, models = [
               {routes.map((route) => {
                 const capability = models.find((item) => item.provider === route.provider && item.id === route.model) || customCapabilities[route.key];
                 const levels = capability?.effort_levels || [];
-                const defaultEffort = capability?.default_effort || levels[0];
+                const defaultEffort = capability?.default_effort;
                 const invalidEffort = route.effort && !levels.includes(route.effort);
                 const selectId = 'effort-' + route.path.join('-');
                 return (
@@ -199,7 +199,7 @@ export function ConfigModal({ isOpen, onClose, onConfigSaved, config, models = [
                         id={selectId} value={route.effort || ''} disabled={loading}
                         onChange={(event) => setConfigText(JSON.stringify(setRouteEffort(readConfig(), route.path, event.target.value), null, 2))}
                       >
-                        <option value="">Default ({defaultEffort})</option>
+                        <option value="">{defaultEffort ? `Default (${defaultEffort})` : 'Provider default (omit effort)'}</option>
                         {invalidEffort && <option value={route.effort}>{route.effort} (unsupported)</option>}
                         {levels.map((effort) => <option key={effort} value={effort}>{effort}</option>)}
                       </select>

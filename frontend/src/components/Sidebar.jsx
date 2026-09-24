@@ -4,6 +4,7 @@ export function Sidebar({
   isOpen, onClose,
   sessions, activeSessionId, onSelectSession, onNewSession, onCloseSession,
   pastMemory, onTogglePastMemory, agentMode, onToggleAgentMode,
+  showSystemSessions, onToggleShowSystemSessions,
   onOpenConfig, onOpenTools, onOpenLibrary, disabled, hasConfig,
 }) {
   return (
@@ -36,7 +37,9 @@ export function Sidebar({
             <button className="session-open" onClick={() => onSelectSession(session.session_id)} disabled={disabled} aria-current={session.session_id === activeSessionId ? 'true' : undefined}>
               <span className="session-info">
                 <span className="session-title">{session.title || 'Untitled Chat'}</span>
-                <span className="session-meta">{session.message_count || 0} messages</span>
+                <span className="session-meta">
+                  {!session.user_session && 'System · '}{session.message_count || 0} messages
+                </span>
               </span>
             </button>
             <div className="session-actions">
@@ -56,6 +59,13 @@ export function Sidebar({
           </label>
           <label className="switch">
             <input id="past-memory" type="checkbox" checked={pastMemory} onChange={(event) => onTogglePastMemory(event.target.checked)} disabled={disabled || !hasConfig} />
+            <span className="slider" />
+          </label>
+        </div>
+        <div className="control-row">
+          <label htmlFor="show-system-sessions" className="control-label" title="Include API-created system sessions in the session list.">Show System Sessions</label>
+          <label className="switch">
+            <input id="show-system-sessions" type="checkbox" checked={showSystemSessions} onChange={(event) => onToggleShowSystemSessions(event.target.checked)} disabled={disabled} />
             <span className="slider" />
           </label>
         </div>

@@ -1,5 +1,6 @@
 """API regressions for config ownership, routing, effort, and saved memory."""
 from copy import deepcopy
+import json
 import pytest
 from fastapi.testclient import TestClient
 from backend.app import main
@@ -11,7 +12,10 @@ MOCK_CONFIG = {"sequences": [{"provider": "mock", "model": "mock-assistant", "re
 
 
 def session(config=None, **fields):
-    response = client.post("/api/sessions", json={"config": deepcopy(config or MOCK_CONFIG), **fields})
+    response = client.post(
+        "/api/sessions",
+        json={"config": deepcopy(config or MOCK_CONFIG), "user_session": True, **fields},
+    )
     assert response.status_code == 201, response.text
     return response.json()["session_id"]
 
@@ -55,6 +59,12 @@ def test_config_is_required_and_only_settings_source(payload):
     {"sequences": [{"type": "probability", "choices": [{"provider": "mock", "model": "x", "probability": 0}]}]},
     {**MOCK_CONFIG, "context_window": 0}, {**MOCK_CONFIG, "past_memory": "false"},
     {**MOCK_CONFIG, "memory_window": -1}, {**MOCK_CONFIG, "memory_scope": "all"},
+    {**MOCK_CONFIG, "memory_sources": []},
+    {**MOCK_CONFIG, "memory_sources": {"user_sessions": "true"}},
+    {**MOCK_CONFIG, "memory_sources": {"unknown": True}},
+    {**MOCK_CONFIG, "agent_final_retries": -1},
+    {**MOCK_CONFIG, "agent_final_retries": 16},
+    {**MOCK_CONFIG, "agent_final_retries": "5"},
     {**MOCK_CONFIG, "effort": "high"},
 ])
 def test_invalid_config_rejected_before_session_creation(config):
@@ -78,6 +88,46 @@ def test_config_round_trip_and_session_isolation():
     assert client.get(f"/api/sessions/{first}").json()["config"] == edited
 
 
+def test_session_origin_defaults_to_system_and_can_be_marked_user():
+    system = client.post("/api/sessions", json={"config": MOCK_CONFIG})
+    user = client.post(
+        "/api/sessions", json={"config": MOCK_CONFIG, "user_session": True}
+    )
+    assert system.status_code == user.status_code == 201
+    assert system.json()["user_session"] is False
+    assert user.json()["user_session"] is True
+    assert client.get(f"/api/sessions/{system.json()['session_id']}").json()["session"]["user_session"] is False
+    assert client.get(f"/api/sessions/{user.json()['session_id']}").json()["session"]["user_session"] is True
+
+
+def test_system_session_chat_returns_persisted_mock_receipt(monkeypatch):
+    created = client.post("/api/sessions", json={"config": MOCK_CONFIG})
+    sid = created.json()["session_id"]
+    monkeypatch.setattr(
+        main.router, "route_chat",
+        lambda **kwargs: pytest.fail("System-session messages must not call a provider."),
+    )
+
+    response = client.post("/api/chat", json={"session_id": sid, "message": "Tool event"})
+    assert response.status_code == 200
+    assert response.json()["content"] == "message received"
+    assert response.json()["provider"] == "mock"
+    assert response.json()["tokens"]["total_tokens"] == 0
+    assert response.json()["attempt_info"] == {"mocked": True, "reason": "system_session"}
+    detail = client.get(f"/api/sessions/{sid}").json()
+    assert [message["content"] for message in detail["messages"]] == [
+        "Tool event", "message received",
+    ]
+
+    agent = client.post(
+        "/api/agent/run", json={"session_id": sid, "prompt": "Tool agent event"}
+    )
+    assert agent.status_code == 200
+    assert agent.json()["final_answer"] == "message received"
+    assert agent.json()["steps"] == []
+    assert agent.json()["total_tokens"] == 0
+
+
 def test_openrouter_effort_is_optional_for_every_model():
     omitted = client.post("/api/config/validate", json={
         "sequences": [{"provider": "openrouter", "model": "vendor/future-model", "effort": None}],
@@ -92,7 +142,9 @@ def test_openrouter_effort_is_optional_for_every_model():
 
 
 def test_chat_and_legacy_alias():
-    created = client.post("/api/new", json={"title": "Test", "config": MOCK_CONFIG})
+    created = client.post(
+        "/api/new", json={"title": "Test", "config": MOCK_CONFIG, "user_session": True}
+    )
     assert created.status_code == 201
     sid = created.json()["session_id"]
     result = client.post("/api/chat", json={"session_id": sid, "message": "Hello"})
@@ -168,6 +220,106 @@ def test_agent_uses_session_config_and_memory(monkeypatch):
     assert any("Juniper" in m["content"] for m in calls[-1]["messages"])
     assert client.post("/api/agent/run", json={"prompt": "test", "provider": "mock"}).status_code == 422
     assert client.post("/api/agent/step", json={"tool": "calculator", "arguments": {"expression": "25 * 4 + 15"}}).json()["result"] == "115"
+
+
+def test_agent_returns_only_final_answer_from_json_with_markdown_escapes(monkeypatch):
+    raw = r'''{
+      "thought": "Infer the active user from u\_admin.",
+      "action": null,
+      "final\_answer": "Active user: u\_admin (admin\@localhost).\nNo explicit active flag was provided."
+    }'''
+    monkeypatch.setattr(main.router, "route_chat", lambda **kwargs: RouteResult(
+        raw, "mock", "actual-model", {"total_tokens": 2}, 1, {}
+    ))
+    sid = session()
+    result = client.post("/api/agent/run", json={"session_id": sid, "prompt": "Who is active?"})
+    assert result.status_code == 200, result.text
+    assert result.json()["final_answer"] == (
+        "Active user: u_admin (admin@localhost).\nNo explicit active flag was provided."
+    )
+    assert "thought" not in result.json()["final_answer"]
+    detail = client.get(f"/api/sessions/{sid}").json()
+    assert detail["messages"][-1]["content"] == result.json()["final_answer"]
+
+
+def test_agent_normalizes_tool_video_wrapper_without_retry(monkeypatch):
+    videos = [{
+        "url": "http://127.0.0.1:8010/api/media/demo/stream",
+        "thumbnail": "http://127.0.0.1:8010/api/media/demo/thumbnail",
+        "title": "イロドリ空 (Irodori Sora)",
+        "description": None,
+        "uploader": "Rhit Keiichi",
+        "downloaded_date": "2026-09-24T05:16:12.187470+00:00",
+    }]
+    wrapped = json.dumps({
+        "video_block": f"`video\n{json.dumps(videos, ensure_ascii=False)}\n`",
+    }, ensure_ascii=False).replace('"video_block"', r'"video\_block"')
+    calls = []
+
+    def complete(**kwargs):
+        calls.append(kwargs)
+        return RouteResult(wrapped, "mock", "actual-model", {"total_tokens": 1}, 1, {})
+
+    monkeypatch.setattr(main.router, "route_chat", complete)
+    sid = session()
+    result = client.post("/api/agent/run", json={"session_id": sid, "prompt": "Find videos"})
+
+    assert result.status_code == 200, result.text
+    assert len(calls) == 1
+    answer = result.json()["final_answer"]
+    assert answer.startswith("```video\n") and answer.endswith("\n```")
+    decoded = json.loads(answer.removeprefix("```video\n").removesuffix("\n```"))
+    assert decoded == videos
+    assert client.get(f"/api/sessions/{sid}").json()["messages"][-1]["content"] == answer
+
+
+def test_agent_retries_null_final_answer_using_configured_budget(monkeypatch):
+    incomplete = json.dumps({
+        "thought": "The project list is available.",
+        "action": {"tool": "none", "arguments": {}},
+        "final_answer": None,
+    })
+    outputs = [incomplete] * 5 + [json.dumps({
+        "thought": "Now provide the result.",
+        "action": None,
+        "final_answer": "Project: DEMO",
+    })]
+    calls = []
+
+    def complete(**kwargs):
+        calls.append(kwargs)
+        return RouteResult(outputs.pop(0), "mock", "actual-model", {"total_tokens": 1}, 1, {})
+
+    monkeypatch.setattr(main.router, "route_chat", complete)
+    sid = session()
+    result = client.post("/api/agent/run", json={"session_id": sid, "prompt": "List projects"})
+    assert result.status_code == 200, result.text
+    assert result.json()["final_answer"] == "Project: DEMO"
+    assert len(calls) == 6
+    assert "final_answer set to null" in calls[1]["messages"][-1]["content"]
+    assert result.json()["steps"][0]["observation"].endswith("retry 1 of 5.")
+
+
+def test_agent_displays_last_json_after_final_answer_retries_are_exhausted(monkeypatch):
+    incomplete = json.dumps({
+        "thought": "Still preparing the result.",
+        "action": None,
+        "final_answer": None,
+    })
+    calls = []
+
+    def complete(**kwargs):
+        calls.append(kwargs)
+        return RouteResult(incomplete, "mock", "actual-model", {"total_tokens": 1}, 1, {})
+
+    monkeypatch.setattr(main.router, "route_chat", complete)
+    sid = session({**MOCK_CONFIG, "agent_final_retries": 2})
+    result = client.post("/api/agent/run", json={"session_id": sid, "prompt": "List projects"})
+    assert result.status_code == 200, result.text
+    assert len(calls) == 3
+    displayed = result.json()["final_answer"]
+    assert displayed.startswith("```json\n") and displayed.endswith("\n```")
+    assert json.loads(displayed.removeprefix("```json\n").removesuffix("\n```"))["final_answer"] is None
 
 
 def test_router_preserves_efforts_on_retries_probability_and_fallback(monkeypatch):

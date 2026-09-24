@@ -78,12 +78,21 @@ class SessionManager:
                     system_prompt TEXT NOT NULL,
                     past_memory INTEGER NOT NULL DEFAULT 1,
                     context_window INTEGER NOT NULL DEFAULT 10,
+                    user_session INTEGER NOT NULL DEFAULT 0,
                     config_json TEXT,
                     status TEXT NOT NULL DEFAULT 'active',
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 )
             """)
+            session_columns = {row["name"] for row in conn.execute("PRAGMA table_info(sessions)")}
+            if "user_session" not in session_columns:
+                conn.execute(
+                    "ALTER TABLE sessions ADD COLUMN user_session INTEGER NOT NULL DEFAULT 0"
+                )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS sessions_user_session ON sessions(user_session)"
+            )
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS messages (
                     id TEXT PRIMARY KEY,
@@ -235,9 +244,9 @@ class SessionManager:
                 """
                 INSERT INTO sessions (
                     id, title, provider, model, system_prompt,
-                    past_memory, context_window, config_json, status,
+                    past_memory, context_window, user_session, config_json, status,
                     created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
                 """,
                 (
                     session_id,
@@ -247,6 +256,7 @@ class SessionManager:
                     config["system_prompt"],
                     int(config["past_memory"]),
                     config["context_window"],
+                    int(req.user_session),
                     config_str,
                     now,
                     now,
@@ -264,6 +274,7 @@ class SessionManager:
             model="config.json",
             past_memory=config["past_memory"],
             context_window=config["context_window"],
+            user_session=req.user_session,
             message_count=0,
             created_at=now,
             updated_at=now,
@@ -305,6 +316,7 @@ class SessionManager:
                 model=s_row["model"],
                 past_memory=bool(s_row["past_memory"]),
                 context_window=s_row["context_window"],
+                user_session=bool(s_row["user_session"]),
                 message_count=len(messages),
                 created_at=s_row["created_at"],
                 updated_at=s_row["updated_at"],
@@ -315,6 +327,18 @@ class SessionManager:
                 session=summary, messages=messages, config=config,
                 system_prompt=s_row["system_prompt"],
             )
+
+    def is_user_session(self, session_id: str) -> bool:
+        """Return an active session's persisted origin classification."""
+        with self._get_conn() as conn:
+            row = conn.execute(
+                "SELECT user_session, status FROM sessions WHERE id = ?", (session_id,)
+            ).fetchone()
+        if row is None:
+            raise ValueError(f"Session '{session_id}' not found.")
+        if row["status"] != "active":
+            raise ValueError(f"Session '{session_id}' is closed.")
+        return bool(row["user_session"])
 
     def update_session_config(self, session_id: str, config: Dict[str, Any]) -> SessionDetail:
         """Replace an active session's routing and memory settings atomically."""
@@ -373,6 +397,7 @@ class SessionManager:
                         model=r["model"],
                         past_memory=bool(r["past_memory"]),
                         context_window=r["context_window"],
+                        user_session=bool(r["user_session"]),
                         message_count=r["msg_count"],
                         created_at=r["created_at"],
                         updated_at=r["updated_at"],
@@ -563,19 +588,50 @@ class SessionManager:
         return enriched
 
     @staticmethod
+    def _memory_sources(config: Dict[str, Any]) -> Dict[str, bool]:
+        return config.get("memory_sources", {
+            "user_sessions": True,
+            "system_sessions": True,
+            "completion_events": True,
+        })
+
+    @classmethod
+    def _session_source_clause(cls, config: Dict[str, Any], alias: str = "s") -> str:
+        sources = cls._memory_sources(config)
+        user_sessions = sources["user_sessions"]
+        system_sessions = sources["system_sessions"]
+        if user_sessions and system_sessions:
+            return f"{alias}.past_memory = 1"
+        if user_sessions:
+            return f"{alias}.past_memory = 1 AND {alias}.user_session = 1"
+        if system_sessions:
+            return f"{alias}.past_memory = 1 AND {alias}.user_session = 0"
+        return "0 = 1"
+
+    @classmethod
+    def _summary_scope(cls, scope: str, config: Dict[str, Any]) -> str:
+        """Keep cached summaries for different source selections isolated."""
+        sources = cls._memory_sources(config)
+        bits = "".join("1" if sources[key] else "0" for key in (
+            "user_sessions", "system_sessions", "completion_events"
+        ))
+        return scope if bits == "111" else f"{scope}|sources={bits}"
+
+    @staticmethod
     def _scope(config: Dict[str, Any], session_id: Optional[str]) -> Tuple[str, str]:
         if config.get("memory_scope") == "session":
             return ("session", session_id) if session_id else ("completions", "")
         return "all_sessions", ""
 
     def _source_rows(
-        self, conn: sqlite3.Connection, memory_date: str, scope: str, scoped_session: str
+        self, conn: sqlite3.Connection, memory_date: str, scope: str,
+        scoped_session: str, config: Dict[str, Any]
     ) -> List[Tuple[str, str, str, str]]:
         """Return stable (source, id, created_at, content) tuples for one UTC day."""
         rows: List[Tuple[str, str, str, str]] = []
         if scope != "completions":
             params: List[Any] = [memory_date]
-            clause = "s.past_memory = 1"
+            clause = self._session_source_clause(config)
             if scope == "session":
                 clause += " AND m.session_id = ?"
                 params.append(scoped_session)
@@ -588,7 +644,8 @@ class SessionManager:
                 params,
             ):
                 rows.append(("message", row["id"], row["created_at"], f"{row['role']}: {row['content']}"))
-        if scope in {"all_sessions", "completions"}:
+        if (scope in {"all_sessions", "completions"}
+                and self._memory_sources(config)["completion_events"]):
             for row in conn.execute(
                 """SELECT id, response, created_at FROM completions_response
                    WHERE substr(created_at, 1, 10) = ? ORDER BY created_at, rowid""",
@@ -630,6 +687,7 @@ class SessionManager:
         today = today or datetime.now(timezone.utc).date()
         first_day = today - timedelta(days=SUMMARY_RETENTION_DAYS)
         scope, scoped_session = self._scope(config, session_id)
+        summary_scope = self._summary_scope(scope, config)
         work = []
         with self._get_conn() as conn:
             conn.execute(
@@ -638,13 +696,15 @@ class SessionManager:
             )
             for offset in range(SUMMARY_RETENTION_DAYS, 0, -1):
                 memory_date = (today - timedelta(days=offset)).isoformat()
-                sources = self._source_rows(conn, memory_date, scope, scoped_session)
+                sources = self._source_rows(
+                    conn, memory_date, scope, scoped_session, config
+                )
                 if not sources:
                     # A session may have disabled sharing since an earlier summary
                     # was built; do not retain now-ineligible memory.
                     conn.execute(
                         "DELETE FROM memory_summary WHERE memory_date = ? AND scope = ? AND session_id = ?",
-                        (memory_date, scope, scoped_session),
+                        (memory_date, summary_scope, scoped_session),
                     )
                     continue
                 fingerprint = hashlib.sha256(
@@ -653,7 +713,7 @@ class SessionManager:
                 existing = conn.execute(
                     """SELECT source_fingerprint FROM memory_summary
                        WHERE memory_date = ? AND scope = ? AND session_id = ?""",
-                    (memory_date, scope, scoped_session),
+                    (memory_date, summary_scope, scoped_session),
                 ).fetchone()
                 if existing is None or existing["source_fingerprint"] != fingerprint:
                     # Bound summarizer input while retaining the most recent useful records.
@@ -687,7 +747,7 @@ class SessionManager:
                            source_fingerprint = excluded.source_fingerprint,
                            source_count = excluded.source_count,
                            updated_at = excluded.updated_at""",
-                    (memory_date, scope, scoped_session, summary, stored_fingerprint,
+                    (memory_date, summary_scope, scoped_session, summary, stored_fingerprint,
                      source_count, now, now),
                 )
 
@@ -700,10 +760,11 @@ class SessionManager:
             return []
         today = datetime.now(timezone.utc).date().isoformat()
         scope, scoped_session = self._scope(config, session_id)
+        summary_scope = self._summary_scope(scope, config)
         raw: List[Dict[str, str]] = []
         if scope != "completions":
             params: List[Any] = [ARCHIVE_MESSAGE_MAX_CHARS, today]
-            clause = "s.past_memory = 1"
+            clause = self._session_source_clause(config)
             if scope == "session":
                 clause += " AND m.session_id = ?"
                 params.append(scoped_session)
@@ -717,7 +778,7 @@ class SessionManager:
             params.append(memory_window)
             rows = conn.execute(
                 f"""SELECT m.id, m.session_id, m.role, substr(m.content, 1, ?) AS content,
-                           m.created_at, substr(s.title, 1, 200) AS title
+                           m.created_at, substr(s.title, 1, 200) AS title, s.user_session
                     FROM messages m JOIN sessions s ON m.session_id = s.id
                     WHERE substr(m.created_at, 1, 10) = ? AND {clause}
                       AND m.role IN ('user', 'assistant') {exclusion}
@@ -727,10 +788,12 @@ class SessionManager:
             raw.extend({
                 "source": "message", "session_id": row["session_id"],
                 "session_title": row["title"], "message_id": row["id"],
+                "session_type": "user_session" if row["user_session"] else "system_session",
                 "role": row["role"], "created_at": row["created_at"],
                 "content": row["content"],
             } for row in rows)
-        if scope in {"all_sessions", "completions"}:
+        if (scope in {"all_sessions", "completions"}
+                and self._memory_sources(config)["completion_events"]):
             rows = conn.execute(
                 """SELECT id, response, created_at FROM completions_response
                    WHERE substr(created_at, 1, 10) = ?
@@ -753,7 +816,7 @@ class SessionManager:
                WHERE scope = ? AND session_id = ? AND memory_date < ?
                  AND memory_date >= date(?, '-7 days')
                ORDER BY memory_date DESC""",
-            (scope, scoped_session, today, today),
+            (summary_scope, scoped_session, today, today),
         )]
 
         def fit(entries: List[Dict[str, str]], limit: int) -> Tuple[List[Dict[str, str]], int]:

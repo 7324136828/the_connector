@@ -8,6 +8,7 @@ from ..model_capabilities import resolve_effort
 
 PROVIDERS = {"openai", "claude", "gemini", "openrouter", "ollama", "mock"}
 DEFAULT_SYSTEM_PROMPT = "You are a helpful, precise, and thoughtful AI assistant."
+MEMORY_SOURCE_KEYS = {"user_sessions", "system_sessions", "completion_events"}
 
 
 def _integer(value: Any, name: str, minimum: int, maximum: int) -> int:
@@ -56,7 +57,7 @@ def normalize_config(value: Any) -> dict:
     if not isinstance(value, dict):
         raise ValueError("config must be a config.json object.")
     config = deepcopy(value)
-    _keys(config, {"sequences", "system_prompt", "past_memory", "context_window", "memory_window", "memory_scope"}, "config")
+    _keys(config, {"sequences", "system_prompt", "past_memory", "context_window", "memory_window", "memory_scope", "memory_sources", "agent_final_retries"}, "config")
     steps = config.get("sequences")
     if not isinstance(steps, list) or not 1 <= len(steps) <= 30:
         raise ValueError("config.sequences must contain between 1 and 30 routing steps.")
@@ -88,10 +89,24 @@ def normalize_config(value: Any) -> dict:
     config["past_memory"] = memory
     config["context_window"] = _integer(config.get("context_window", 10), "context_window", 1, 200)
     config["memory_window"] = _integer(config.get("memory_window", 20), "memory_window", 0, 200)
+    config["agent_final_retries"] = _integer(
+        config.get("agent_final_retries", 5), "agent_final_retries", 0, 15
+    )
     scope = config.get("memory_scope", "all_sessions")
     if scope not in ("all_sessions", "session"):
         raise ValueError("memory_scope must be 'all_sessions' or 'session'.")
     config["memory_scope"] = scope
+    sources = config.get("memory_sources", {})
+    if not isinstance(sources, dict):
+        raise ValueError("memory_sources must be an object.")
+    _keys(sources, MEMORY_SOURCE_KEYS, "memory_sources")
+    normalized_sources = {}
+    for source in sorted(MEMORY_SOURCE_KEYS):
+        enabled = sources.get(source, True)
+        if type(enabled) is not bool:
+            raise ValueError(f"memory_sources.{source} must be true or false.")
+        normalized_sources[source] = enabled
+    config["memory_sources"] = normalized_sources
     return config
 
 

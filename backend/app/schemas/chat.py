@@ -26,6 +26,7 @@ class NewSessionRequest(BaseModel):
     config: Optional[Dict[str, Any]] = None
     config_id: Optional[str] = Field(default=None, min_length=1)
     history_id: Optional[str] = Field(default=None, min_length=1)
+    user_session: bool = False
 
     @field_validator("config")
     @classmethod
@@ -58,6 +59,7 @@ class NewSessionResponse(BaseModel):
     system_prompt: str
     past_memory: bool
     context_window: int
+    user_session: bool
     created_at: str
     status: str = "active"
 
@@ -110,6 +112,7 @@ class SessionSummary(BaseModel):
     model: str
     past_memory: bool
     context_window: int
+    user_session: bool
     message_count: int
     created_at: str
     updated_at: str

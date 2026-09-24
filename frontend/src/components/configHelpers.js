@@ -29,3 +29,28 @@ export function setRouteEffort(config, path, effort) {
 export function suggestedModelId(name) {
   return name.toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^[^a-z0-9]+/, '').slice(0, 100).replace(/-+$/, '');
 }
+
+export const DEFAULT_MEMORY_SOURCES = {
+  user_sessions: true,
+  system_sessions: true,
+  completion_events: true,
+};
+
+export function setMemorySource(config, source, enabled) {
+  if (!(source in DEFAULT_MEMORY_SOURCES)) throw new Error('Unknown memory source: ' + source);
+  return {
+    ...config,
+    memory_sources: {
+      ...DEFAULT_MEMORY_SOURCES,
+      ...(config.memory_sources || {}),
+      [source]: enabled,
+    },
+  };
+}
+
+export function setAgentFinalRetries(config, retries) {
+  if (!Number.isInteger(retries) || retries < 0 || retries > 15) {
+    throw new Error('Agent final-answer retries must be a whole number between 0 and 15.');
+  }
+  return { ...config, agent_final_retries: retries };
+}

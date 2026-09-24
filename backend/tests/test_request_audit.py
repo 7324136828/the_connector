@@ -65,7 +65,9 @@ def test_actual_fallback_and_upstream_model_are_private_and_persisted(monkeypatc
 
 def test_session_chat_routing_is_correlated_with_request():
     with TestClient(main.app) as client:
-        session_id = client.post("/api/sessions", json={"config": mock_config()}).json()["session_id"]
+        session_id = client.post(
+            "/api/sessions", json={"config": mock_config(), "user_session": True}
+        ).json()["session_id"]
         response = client.post("/api/chat", json={"session_id": session_id, "message": "Hello"})
     assert response.status_code == 200
     record = audit_records()[-1]

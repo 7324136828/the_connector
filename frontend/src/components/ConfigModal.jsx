@@ -1,6 +1,6 @@
 ﻿import React, { useState, useEffect, useRef } from 'react';
 import { getExampleConfig, getExampleConfigUrl, getModelCapabilities, loadConfigFile, recordConfigLoad, validateConfig } from '../services/api';
-import { getConfigRoutes, setRouteEffort, suggestedModelId } from './configHelpers';
+import { DEFAULT_MEMORY_SOURCES, getConfigRoutes, setAgentFinalRetries, setMemorySource, setRouteEffort, suggestedModelId } from './configHelpers';
 
 export function ConfigModal({ isOpen, onClose, onConfigSaved, config, models = [], activeSessionId, libraryEntry, libraryMode = false, onSaveCopy }) {
   const [configText, setConfigText] = useState('');
@@ -15,6 +15,8 @@ export function ConfigModal({ isOpen, onClose, onConfigSaved, config, models = [
 
   let parsedConfig = null;
   try { parsedConfig = JSON.parse(configText); } catch { /* Editing may temporarily produce incomplete JSON. */ }
+  const configObject = parsedConfig && typeof parsedConfig === 'object' && !Array.isArray(parsedConfig) ? parsedConfig : null;
+  const memorySources = { ...DEFAULT_MEMORY_SOURCES, ...(configObject?.memory_sources || {}) };
   const routes = getConfigRoutes(parsedConfig);
   const routeKeys = JSON.stringify([...new Set(routes.map((route) => route.key))]);
 
@@ -178,6 +180,48 @@ export function ConfigModal({ isOpen, onClose, onConfigSaved, config, models = [
             disabled={loading} spellCheck={false}
             placeholder='Choose a file, use the example, or paste your config.json here.'
           />
+          {configObject && (
+            <section className="config-memory-sources" aria-labelledby="memory-sources-title">
+              <h3 id="memory-sources-title">Memory sources</h3>
+              <p className="config-description">Choose which persisted sources may be loaded as past memory. API-created sessions are system sessions unless their request sets <code>user_session</code> to true.</p>
+              <div className="config-memory-options">
+                {[
+                  ['user_sessions', 'User sessions'],
+                  ['system_sessions', 'System sessions'],
+                  ['completion_events', 'Completion events'],
+                ].map(([source, label]) => (
+                  <label key={source}>
+                    <input
+                      type="checkbox" checked={memorySources[source]} disabled={loading}
+                      onChange={(event) => {
+                        setConfigText(JSON.stringify(setMemorySource(configObject, source, event.target.checked), null, 2));
+                        setError('');
+                      }}
+                    />
+                    {label}
+                  </label>
+                ))}
+              </div>
+            </section>
+          )}
+          {configObject && (
+            <section className="config-agent-settings" aria-labelledby="agent-settings-title">
+              <h3 id="agent-settings-title">Agent settings</h3>
+              <p className="config-description">Retry when agentic mode returns structured JSON without a final answer or a registered tool action.</p>
+              <label htmlFor="agent-final-retries">
+                Final-answer retries
+                <input
+                  id="agent-final-retries" type="number" min="0" max="15" step="1"
+                  value={configObject.agent_final_retries ?? 5} disabled={loading}
+                  onChange={(event) => {
+                    if (event.target.value === '') return;
+                    setConfigText(JSON.stringify(setAgentFinalRetries(configObject, Number(event.target.value)), null, 2));
+                    setError('');
+                  }}
+                />
+              </label>
+            </section>
+          )}
           {routes.length > 0 && (
             <section className="config-efforts" aria-label="Model effort settings">
               <h3>Model effort</h3>
@@ -211,13 +255,19 @@ export function ConfigModal({ isOpen, onClose, onConfigSaved, config, models = [
               })}
             </section>
           )}
-          {parsedConfig && (
+          {configObject && (
             <p className="config-memory-note">
-              {parsedConfig.past_memory === false
+              {configObject.past_memory === false
                 ? 'Past memory is off.'
-                : parsedConfig.memory_scope === 'session'
+                : !Object.values(memorySources).some(Boolean)
+                  ? 'Past memory is on, but no persisted memory sources are selected.'
+                : configObject.memory_scope === 'session'
                   ? 'Past memory includes saved messages from this session.'
-                  : 'Past memory includes saved messages from this session and other conversations.'}
+                  : `Past memory can load: ${[
+                      memorySources.user_sessions && 'user sessions',
+                      memorySources.system_sessions && 'system sessions',
+                      memorySources.completion_events && 'completion events',
+                    ].filter(Boolean).join(', ')}.`}
             </p>
           )}
         </div>

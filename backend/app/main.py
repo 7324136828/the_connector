@@ -125,12 +125,12 @@ def new_session(req: NewSessionRequest) -> NewSessionResponse:
         if not record["active"]:
             raise HTTPException(status_code=409, detail="Activate this saved configuration before creating a session.")
         # Sessions own immutable snapshots; library edits never rewrite a chat.
-        req = NewSessionRequest(title=req.title, config=record["config"])
+        req = NewSessionRequest(title=req.title, config=record["config"], user_session=req.user_session)
     elif req.history_id:
         record = configuration_history_manager.get_history(req.history_id)
         if record is None:
             raise HTTPException(status_code=404, detail="Configuration history entry not found.")
-        req = NewSessionRequest(title=req.title, config=record["config"])
+        req = NewSessionRequest(title=req.title, config=record["config"], user_session=req.user_session)
     summary = session_manager.create_session(req)
     return NewSessionResponse(
         session_id=summary.session_id,
@@ -140,6 +140,7 @@ def new_session(req: NewSessionRequest) -> NewSessionResponse:
         system_prompt=req.config["system_prompt"],
         past_memory=summary.past_memory,
         context_window=summary.context_window,
+        user_session=summary.user_session,
         created_at=summary.created_at,
         status=summary.status,
     )
@@ -211,6 +212,38 @@ def chat_endpoint(req: ChatRequest) -> ChatResponse:
     Send a user prompt to a session via specific routing logic.
     Maintains a sliding context window unless past_memory is toggled off (stateless).
     """
+    try:
+        user_session = session_manager.is_user_session(req.session_id)
+    except ValueError as exc:
+        raise session_error(exc) from exc
+
+    if not user_session:
+        tokens = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+        try:
+            assistant_msg = session_manager.add_exchange(
+                session_id=req.session_id,
+                user_content=req.message,
+                assistant_content="message received",
+                provider="mock",
+                model="mock-assistant",
+                tokens=tokens,
+                latency_ms=0.0,
+            )
+        except ValueError as exc:
+            raise session_error(exc) from exc
+        return ChatResponse(
+            session_id=req.session_id,
+            message_id=assistant_msg.id or "",
+            role="assistant",
+            content="message received",
+            provider="mock",
+            model="mock-assistant",
+            tokens=TokenUsageInfo(**tokens),
+            latency_ms=0.0,
+            attempt_info={"mocked": True, "reason": "system_session"},
+            created_at=assistant_msg.created_at or "",
+        )
+
     try:
         # Retrieve context window and session configs
         (
@@ -295,6 +328,33 @@ def register_tool(req: AgentRegisterToolRequest) -> Dict[str, Any]:
 @app.post("/api/agent/run", response_model=AgentRunResponse)
 def run_agent(req: AgentRunRequest) -> AgentRunResponse:
     """Execute an autonomous ReAct loop with tools and multi-step reasoning."""
+    try:
+        user_session = session_manager.is_user_session(req.session_id)
+    except ValueError as exc:
+        raise session_error(exc) from exc
+    if not user_session:
+        try:
+            session_manager.add_exchange(
+                session_id=req.session_id,
+                user_content=req.prompt,
+                assistant_content="message received",
+                provider="mock",
+                model="mock-assistant",
+                tokens={"total_tokens": 0},
+                latency_ms=0.0,
+            )
+        except ValueError as exc:
+            raise session_error(exc) from exc
+        return AgentRunResponse(
+            session_id=req.session_id,
+            prompt=req.prompt,
+            steps=[],
+            final_answer="message received",
+            provider="mock",
+            model="mock-assistant",
+            total_tokens=0,
+            latency_ms=0.0,
+        )
     try:
         history, system_prompt, _, _, config = session_manager.get_context_window(req.session_id)
     except ValueError as exc:

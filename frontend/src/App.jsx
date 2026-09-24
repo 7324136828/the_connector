@@ -5,6 +5,7 @@ import { ChatArea } from './components/ChatArea';
 import { ConfigModal } from './components/ConfigModal';
 import { ConfigLibrary } from './components/ConfigLibrary';
 import { AgentToolsModal } from './components/AgentToolsModal';
+import { visibleSessions } from './components/sessionHelpers';
 import {
   createNewSession, sendMessage, closeSession, getSessions, getSession,
   getModels, runAgent, updateSessionConfig, recordConfigLoad,
@@ -28,9 +29,19 @@ export function App() {
   const [libraryDraft, setLibraryDraft] = useState(null);
   const [toolsModalOpen, setToolsModalOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [showSystemSessions, setShowSystemSessions] = useState(() => {
+    try { return window.localStorage.getItem('connector.showSystemSessions') === 'true'; }
+    catch { return false; }
+  });
   const busyRef = useRef(false);
   const pastMemory = selectedConfig?.past_memory ?? true;
   const busy = loading || savingConfig;
+  const displayedSessions = visibleSessions(sessions, showSystemSessions);
+
+  useEffect(() => {
+    try { window.localStorage.setItem('connector.showSystemSessions', String(showSystemSessions)); }
+    catch { /* The preference remains active for this page when storage is unavailable. */ }
+  }, [showSystemSessions]);
 
   useEffect(() => {
     let cancelled = false;
@@ -195,11 +206,12 @@ export function App() {
     <div className="app-container">
       <Sidebar
         isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)}
-        sessions={sessions} activeSessionId={activeSessionId}
+        sessions={displayedSessions} activeSessionId={activeSessionId}
         onSelectSession={selectSession} onNewSession={handleNewSession}
         onCloseSession={handleCloseSession} pastMemory={pastMemory}
         onTogglePastMemory={handleTogglePastMemory} agentMode={agentMode}
         onToggleAgentMode={setAgentMode} onOpenConfig={() => { setSidebarOpen(false); setConfigModalOpen(true); }}
+        showSystemSessions={showSystemSessions} onToggleShowSystemSessions={setShowSystemSessions}
         onOpenTools={() => { setSidebarOpen(false); setToolsModalOpen(true); }} disabled={busy}
         hasConfig={Boolean(selectedConfig)}
         onOpenLibrary={() => { setSidebarOpen(false); setLibraryDraft(null); setLibraryOpen(true); }}

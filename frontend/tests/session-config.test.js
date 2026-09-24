@@ -1,7 +1,8 @@
 import { afterEach, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { getConfigRoutes, setRouteEffort, suggestedModelId } from '../src/components/configHelpers.js';
+import { getConfigRoutes, setAgentFinalRetries, setMemorySource, setRouteEffort, suggestedModelId } from '../src/components/configHelpers.js';
 import { createNewSession, sendMessage, runAgent, updateSessionConfig, validateConfig, createLibraryConfig, updateLibraryConfig, deleteLibraryConfig, getLibraryConfigDownloadUrl, getModels, getConfigHistory, getConfigHistoryDownloadUrl, loadConfigFile, recordConfigLoad } from '../src/services/api.js';
+import { visibleSessions } from '../src/components/sessionHelpers.js';
 
 const originalFetch = globalThis.fetch;
 afterEach(() => { globalThis.fetch = originalFetch; });
@@ -46,7 +47,7 @@ test('sessions carry configuration and messages cannot inject model or memory ov
   await sendMessage({ sessionId: session.session_id, message: 'Hello', provider: 'ignored', pastMemory: false });
   await runAgent({ sessionId: session.session_id, prompt: 'Remember this', provider: 'ignored' });
   await updateSessionConfig(session.session_id, { ...config, past_memory: false });
-  assert.deepEqual(requests[0].body, { title: 'New Chat', config });
+  assert.deepEqual(requests[0].body, { title: 'New Chat', config, user_session: true });
   assert.equal(requests[0].url, '/api/sessions');
   assert.deepEqual(requests[1].body, { session_id: 'created-session', message: 'Hello' });
   assert.deepEqual(requests[2].body, { session_id: 'created-session', prompt: 'Remember this' });
@@ -70,7 +71,7 @@ test('saved configuration selection sends only config_id and provider catalog st
   };
   await createNewSession({ configId: 'saved-config', config: { sequences: [] } });
   await getModels();
-  assert.deepEqual(requests[0].body, { title: 'New Chat', config_id: 'saved-config' });
+  assert.deepEqual(requests[0].body, { title: 'New Chat', config_id: 'saved-config', user_session: true });
   assert.equal(requests[1].url, '/api/providers/models');
 });
 
@@ -105,7 +106,7 @@ test('history selection sends only its immutable snapshot ID, separate from libr
   };
   await createNewSession({ historyId: 'historical-config', configId: 'changed-library-entry', config: { sequences: [] } });
   await getConfigHistory();
-  assert.deepEqual(requests[0].body, { title: 'New Chat', history_id: 'historical-config' });
+  assert.deepEqual(requests[0].body, { title: 'New Chat', history_id: 'historical-config', user_session: true });
   assert.equal(requests[1].url, '/api/config-history');
   assert.equal(getConfigHistoryDownloadUrl('history/id'), '/api/config-history/history%2Fid/download');
 });
@@ -140,4 +141,36 @@ test('malformed uploads are not recorded and server validation failures prevent 
 test('history persistence failures are propagated before a configuration can be selected', async () => {
   globalThis.fetch = async () => ({ ok: false, status: 500, statusText: 'Server Error', json: async () => ({ detail: 'Could not save configuration history.' }) });
   await assert.rejects(recordConfigLoad({ config: {}, source: 'history', name: 'My configuration' }), /Could not save configuration history/);
+});
+
+test('memory source controls preserve defaults and update only the selected source', () => {
+  const config = { sequences: [{ provider: 'mock', model: 'mock-assistant' }] };
+  const withoutSystem = setMemorySource(config, 'system_sessions', false);
+  assert.deepEqual(withoutSystem.memory_sources, {
+    user_sessions: true,
+    system_sessions: false,
+    completion_events: true,
+  });
+  assert.equal(config.memory_sources, undefined);
+  const withoutCompletions = setMemorySource(withoutSystem, 'completion_events', false);
+  assert.equal(withoutCompletions.memory_sources.system_sessions, false);
+  assert.equal(withoutCompletions.memory_sources.completion_events, false);
+});
+
+test('system sessions are hidden by default and shown when the setting is enabled', () => {
+  const sessions = [
+    { session_id: 'user', user_session: true },
+    { session_id: 'system', user_session: false },
+    { session_id: 'legacy' },
+  ];
+  assert.deepEqual(visibleSessions(sessions, false).map((session) => session.session_id), ['user', 'legacy']);
+  assert.deepEqual(visibleSessions(sessions, true), sessions);
+});
+
+test('agent final-answer retry setting accepts only the configured range', () => {
+  const config = { sequences: [{ provider: 'mock', model: 'mock-assistant' }] };
+  assert.equal(setAgentFinalRetries(config, 5).agent_final_retries, 5);
+  assert.throws(() => setAgentFinalRetries(config, -1), /between 0 and 15/);
+  assert.throws(() => setAgentFinalRetries(config, 16), /between 0 and 15/);
+  assert.throws(() => setAgentFinalRetries(config, 1.5), /whole number/);
 });

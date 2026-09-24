@@ -7,6 +7,7 @@ import json
 import operator as op
 import os
 import platform
+import re
 import subprocess
 import sys
 import time
@@ -34,6 +35,60 @@ _SAFE_MATH_OPERATORS = {
     ast.Pow: op.pow,
     ast.USub: op.neg,
 }
+
+_INVALID_JSON_ESCAPE = re.compile(r'\\(?!["\\/bfnrt]|u[0-9a-fA-F]{4})')
+
+
+def _agent_envelope(raw_output: str) -> Optional[Dict[str, Any]]:
+    """Parse a model's agent envelope, tolerating common Markdown escapes."""
+    clean = raw_output.strip()
+    if clean.startswith("```"):
+        first_newline = clean.find("\n")
+        if first_newline >= 0:
+            clean = clean[first_newline + 1:]
+        if clean.rstrip().endswith("```"):
+            clean = clean.rstrip()[:-3].rstrip()
+
+    candidates = [clean]
+    first_brace, last_brace = clean.find("{"), clean.rfind("}")
+    if first_brace >= 0 and last_brace > first_brace:
+        enclosed = clean[first_brace:last_brace + 1]
+        if enclosed != clean:
+            candidates.append(enclosed)
+
+    for candidate in candidates:
+        # Models sometimes escape Markdown punctuation inside JSON (for example
+        # u\_admin or admin\@localhost). Those are invalid JSON escapes, so
+        # remove only the non-JSON backslash before parsing.
+        repaired = _INVALID_JSON_ESCAPE.sub("", candidate)
+        for parser in (json.loads, ast.literal_eval):
+            try:
+                data = parser(repaired)
+            except (ValueError, SyntaxError, TypeError, json.JSONDecodeError):
+                continue
+            if isinstance(data, dict):
+                return data
+    return None
+
+
+def _video_block_answer(value: Any) -> Optional[str]:
+    """Normalize tool video wrappers to the fenced format used by the chat UI."""
+    if isinstance(value, (dict, list)):
+        payload = json.dumps(value, ensure_ascii=False)
+    elif isinstance(value, str):
+        payload = value.strip()
+        match = re.fullmatch(r"(`{1,3})video\s*\r?\n([\s\S]*?)\r?\n\1", payload)
+        if match:
+            payload = match.group(2).strip()
+    else:
+        return None
+    try:
+        decoded = json.loads(_INVALID_JSON_ESCAPE.sub("", payload))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return None
+    if not isinstance(decoded, (dict, list)):
+        return None
+    return "```video\n" + json.dumps(decoded, ensure_ascii=False) + "\n```"
 
 
 def _safe_eval_math(node: ast.AST) -> Any:
@@ -294,7 +349,10 @@ class AgentService:
             '  "action": null,\n'
             '  "final_answer": "Complete final answer to the user"\n'
             "}\n"
-            "Return valid JSON only. Do not wrap in markdown quotes."
+            "Return valid JSON only. Do not wrap the JSON response in markdown quotes. "
+            "If a tool observation contains a fenced `video` block, preserve that entire "
+            "block unchanged inside final_answer so the chat UI can render its player. "
+            "If it contains a video_block field, use that field's value as final_answer."
         )
 
         conversation: List[Dict[str, str]] = list(history) + [
@@ -302,9 +360,14 @@ class AgentService:
         ]
 
         final_answer = ""
+        final_retry_limit = config.get("agent_final_retries", 5)
+        final_retries = 0
+        regular_steps = 0
+        step_idx = 0
 
         # ReAct loop
-        for step_idx in range(1, req.max_steps + 1):
+        while regular_steps < req.max_steps:
+            step_idx += 1
             route_res = router.route_chat(
                 messages=conversation,
                 system_prompt=agent_system_prompt,
@@ -320,20 +383,19 @@ class AgentService:
             action_args = None
             extracted_final = None
 
-            try:
-                # Try parsing JSON
-                # Clean possible code fence
-                clean = raw_output
-                if clean.startswith("```"):
-                    clean = clean.split("\n", 1)[1].rsplit("```", 1)[0].strip()
-                data = json.loads(clean)
+            data = _agent_envelope(raw_output)
+            if data is not None:
                 thought = data.get("thought", "")
                 action = data.get("action")
                 if action and isinstance(action, dict):
                     action_tool = action.get("tool")
                     action_args = action.get("arguments", {})
                 extracted_final = data.get("final_answer")
-            except Exception:
+                if extracted_final is None and "video_block" in data:
+                    extracted_final = _video_block_answer(data["video_block"])
+                if extracted_final is not None and not isinstance(extracted_final, str):
+                    extracted_final = json.dumps(extracted_final, ensure_ascii=False)
+            else:
                 # Heuristic fallback parsing
                 thought = raw_output[:120]
                 if "final" in raw_output.lower() or "answer" in raw_output.lower():
@@ -344,7 +406,8 @@ class AgentService:
                         action_tool = "calculator"
                         action_args = {"expression": req.prompt}
 
-            if extracted_final:
+            if extracted_final is not None:
+                regular_steps += 1
                 final_answer = extracted_final
                 steps.append(AgentStep(
                     step=step_idx,
@@ -356,6 +419,7 @@ class AgentService:
                 break
 
             if action_tool and action_tool in self._tools:
+                regular_steps += 1
                 tool_res = self.execute_tool(action_tool, action_args or {})
                 observation = str(tool_res.result if tool_res.success else f"Error: {tool_res.error}")
 
@@ -373,9 +437,37 @@ class AgentService:
                     "role": "user",
                     "content": f"Observation from {action_tool}: {observation}",
                 })
+            elif data is not None and final_retries < final_retry_limit:
+                final_retries += 1
+                steps.append(AgentStep(
+                    step=step_idx,
+                    thought=thought,
+                    tool=None,
+                    arguments=None,
+                    observation=(
+                        f"No final answer or registered tool was returned; requesting retry "
+                        f"{final_retries} of {final_retry_limit}."
+                    ),
+                ))
+                conversation.append({"role": "assistant", "content": raw_output})
+                conversation.append({
+                    "role": "user",
+                    "content": (
+                        "Your previous JSON response had final_answer set to null and did not "
+                        "request a registered tool. Respond again with exactly one JSON object. "
+                        "If the task is complete, set action to null and final_answer to a "
+                        "non-null user-facing string. Otherwise request one available tool by "
+                        "its exact name; do not use 'none' as a tool name."
+                    ),
+                })
             else:
-                # No valid tool action: conclude with raw output
-                final_answer = raw_output
+                # Unstructured output, or the configured structured-response retry
+                # budget was exhausted: preserve the last response for inspection.
+                regular_steps += 1
+                final_answer = (
+                    "```json\n" + json.dumps(data, ensure_ascii=False, indent=2) + "\n```"
+                    if data is not None else raw_output
+                )
                 steps.append(AgentStep(
                     step=step_idx,
                     thought=thought,

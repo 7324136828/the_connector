@@ -29,7 +29,7 @@ async function request(path, { method = 'GET', body } = {}) {
 
 export function createNewSession({ title = 'New Chat', config, configId, historyId }) {
   const selection = historyId ? { history_id: historyId } : configId ? { config_id: configId } : { config };
-  return request('/sessions', { method: 'POST', body: { title, ...selection } });
+  return request('/sessions', { method: 'POST', body: { title, ...selection, user_session: true } });
 }
 
 export function updateSessionConfig(sessionId, config) {

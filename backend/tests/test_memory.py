@@ -26,8 +26,10 @@ def config(**settings):
     }
 
 
-def create(manager, title="Saved conversation", **settings):
-    return manager.create_session(NewSessionRequest(title=title, config=config(**settings))).session_id
+def create(manager, title="Saved conversation", user_session=False, **settings):
+    return manager.create_session(NewSessionRequest(
+        title=title, config=config(**settings), user_session=user_session
+    )).session_id
 
 
 def archive_from(prompt):
@@ -93,6 +95,32 @@ def test_memory_scope_session_keeps_only_older_current_dialogue(manager):
     history, prompt, *_ = manager.get_context_window(current)
     assert [item["content"] for item in history] == ["recent one", "recent two"]
     assert [item["content"] for item in archive_from(prompt)] == ["older fact"]
+
+
+def test_memory_sources_independently_filter_user_system_and_completion_records(manager):
+    user = create(manager, title="UI chat", user_session=True)
+    system = create(manager, title="Tool chat")
+    manager.add_message(user, "user", "fact from a user session")
+    manager.add_message(system, "user", "fact from a system session")
+    manager.record_completion_response({
+        "id": "chatcmpl-source-filter", "created": datetime.now(timezone.utc).timestamp(),
+        "choices": [{"message": {"role": "assistant", "content": "fact from a completion event"}}],
+    })
+
+    expected = {
+        "user_sessions": ("fact from a user session", "user_session"),
+        "system_sessions": ("fact from a system session", "system_session"),
+        "completion_events": ("fact from a completion event", None),
+    }
+    for enabled_source, (content, session_type) in expected.items():
+        sources = {name: name == enabled_source for name in expected}
+        recipient = create(manager, memory_sources=sources)
+        archive = archive_from(manager.get_context_window(recipient)[1])
+        assert [entry["content"] for entry in archive] == [content]
+        if session_type:
+            assert archive[0]["session_type"] == session_type
+        else:
+            assert archive[0]["source"] == "completion_response"
 
 
 def test_archive_message_limit_and_disabled_archive_do_not_duplicate_recent_history(manager):
@@ -217,12 +245,15 @@ def test_global_daily_summary_drops_memory_when_source_disables_sharing(manager)
 
 
 def test_config_snapshot_and_updates_persist_across_restart(manager):
-    request = NewSessionRequest(config=config(past_memory=False, memory_window=3))
+    request = NewSessionRequest(
+        config=config(past_memory=False, memory_window=3), user_session=True
+    )
     summary = manager.create_session(request)
     request.config["sequences"][0]["model"] = "mutated-after-create"
     original = manager.get_session(summary.session_id)
     assert original.config["sequences"][0]["model"] == "mock-assistant"
     assert original.session.past_memory is False
+    assert original.session.user_session is True
     assert original.system_prompt == config()["system_prompt"]
 
     replacement = config(past_memory=True, context_window=5, memory_window=7, memory_scope="session")
@@ -233,6 +264,7 @@ def test_config_snapshot_and_updates_persist_across_restart(manager):
     assert restarted.config["sequences"][0]["effort"] == "high"
     assert restarted.session.context_window == 5
     assert restarted.session.past_memory is True
+    assert restarted.session.user_session is True
 
 
 def test_legacy_direct_session_migrates_from_its_own_fields(manager):

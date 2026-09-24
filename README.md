@@ -244,6 +244,12 @@ Each probability selection also emits an INFO message in the backend console, fo
   "context_window": 10,
   "memory_window": 20,
   "memory_scope": "all_sessions",
+  "memory_sources": {
+    "user_sessions": true,
+    "system_sessions": true,
+    "completion_events": true
+  },
+  "agent_final_retries": 5,
   "sequences": [
     {
       "type": "probability",
@@ -282,6 +288,8 @@ Only `sequences` is required at the top level. It must contain 1-30 steps; proba
 | `context_window` | `10` | Recent messages from the current session; range 1-200 |
 | `memory_window` | `20` | Maximum archived messages included; range 0-200; `0` disables the archive |
 | `memory_scope` | `"all_sessions"` | Include other saved conversations, or use `"session"` for current-session history only |
+| `memory_sources` | All three sources enabled | Independently include `user_sessions`, `system_sessions`, and/or `completion_events` in persisted memory |
+| `agent_final_retries` | `5` | Additional model attempts when agentic mode returns structured JSON with no final answer or registered tool action; range 0-15 |
 
 ### Model effort
 
@@ -310,7 +318,7 @@ Past Memory retrieves persisted SQLite messages and successful OpenAI-compatible
 
 The archive puts today's raw memory first (up to `memory_window` items), followed by daily summaries for the preceding seven completed UTC days. On the first memory-enabled request after a day ends, that day's eligible rows from `messages` and `completions_response` are compacted through the configured LLM into fewer than 200 words and saved in `memory_summary`; a bounded extractive fallback keeps memory available if that call fails. Older summaries are removed. Raw session transcripts and compatible response records remain stored. Each item is capped at 4,000 characters, today's section at 8,000 encoded characters, and the complete encoded archive at 16,000 characters. Recent web-session context is excluded from today's archive to avoid duplicates. Archived text is marked as untrusted historical data, and bounded retrieval can omit older facts.
 
-Setting `past_memory: false` disables retrieval for that session or compatible configuration and excludes that web session as a source for other conversations. Its transcript is still saved. Setting `memory_scope: "session"` restricts a web session to its own history; for a sessionless compatible call, it restricts memory to compatible responses. The default `all_sessions` scope combines eligible session messages and compatible responses.
+Setting `past_memory: false` disables retrieval for that session or compatible configuration and excludes that session as a source for other conversations. Its transcript is still saved. `memory_sources` independently controls whether persisted user-session messages, system-session messages, and successful compatible completion events can be loaded. All three default to `true` for backward compatibility, and the configuration screen exposes them as checkboxes. Setting `memory_scope: "session"` restricts a session to its own history; for a sessionless compatible call, it restricts memory to compatible responses. The default `all_sessions` scope combines the selected eligible sources.
 
 Memory is scoped to this application's local database, which is intended for a single user. There is no per-account separation. **Close session** archives the conversation and clears temporary files; it does not erase its stored messages. Closed sessions can still contribute memory when enabled and remain accessible by session ID for viewing or export.
 
@@ -328,6 +336,7 @@ Content-Type: application/json
 
 {
   "title": "My conversation",
+  "user_session": false,
   "config": {
     "sequences": [{"provider": "mock", "model": "mock-assistant", "retries": 0}],
     "past_memory": true
@@ -335,7 +344,9 @@ Content-Type: application/json
 }
 ```
 
-Alternatively, create from an active library entry with `{ "title": "My conversation", "config_id": "the-library-record-id" }`, or from history with `{ "title": "My conversation", "history_id": "the-history-entry-id" }`. Provide **exactly one** of `config`, `config_id`, or `history_id`. `config_id` is the saved record's ID, not its `model_id`. Creation copies the selected configuration into the session.
+Alternatively, create from an active library entry with `{ "title": "My conversation", "config_id": "the-library-record-id" }`, or from history with `{ "title": "My conversation", "history_id": "the-history-entry-id" }`. Provide **exactly one** of `config`, `config_id`, or `history_id`. `config_id` is the saved record's ID, not its `model_id`. Creation copies the selected configuration into the session. `user_session` defaults to `false`, classifying direct API sessions as system sessions; the web UI sends `true` for sessions it creates. The flag is persisted and returned with session metadata.
+
+`POST /api/chat` and `POST /api/agent/run` on a system session store the incoming message and return the deterministic mocked assistant response `message received` without invoking a configured provider. System sessions are hidden from the web session list by default. Enable **Show System Sessions** in the sidebar settings to inspect them; this display preference is stored in the browser.
 
 Creation returns HTTP 201 with `session_id` and session metadata. `title` is optional. `POST /api/new` is a deprecated alias with the same contract. Legacy top-level `provider`, `model`, or memory overrides are rejected.
 
@@ -371,9 +382,26 @@ The reply includes the assistant content, selected provider/model, token usage, 
 {"session_id": "your-session-id", "prompt": "Calculate 45 * 180 + 950.", "max_steps": 5}
 ```
 
-`max_steps` accepts 1-15 and defaults to 5; an optional `tools` list selects the tools described to the agent. The response includes tool steps and a final answer, which is saved in the session. Neither chat nor agent requests accept provider/model overrides.
+`max_steps` accepts 1-15 and defaults to 5; an optional `tools` list selects the tools described to the agent. The response includes tool steps and a final answer, which is saved in the session. If a structured response has `final_answer: null` without a registered tool action, the Connector re-prompts according to `agent_final_retries` (default 5). If every retry remains incomplete, the last response is displayed as a formatted JSON code block for inspection. This retry value is editable under **Agent settings** in the configuration screen. In the web chat, the reasoning and tool trace is retained in a collapsed panel and expands only when the user selects it. Neither chat nor agent requests accept provider/model overrides.
 
 `GET /api/agent/tools` lists available tool schemas. `POST /api/agent/step` executes `{ "tool": "calculator", "arguments": { "expression": "25 * 4" } }`. `POST /api/agent/register-tool` registers a named tool schema and optional external webhook endpoint.
+
+The chat renderer recognizes fenced `video` blocks returned in assistant text. A block contains one JSON object or an array of up to 20 objects. `url` (also `src`, `video_url`, or `play_url`) is required; `thumbnail`/`poster`, `title`, `description`, `uploader`, and `downloaded_date` are optional. HTTP(S) and same-origin relative media URLs are accepted; unsafe schemes remain visible as ordinary code rather than being loaded. For example:
+
+````markdown
+```video
+{
+  "url": "https://media.example/video.mp4",
+  "thumbnail": "https://media.example/thumbnail.jpg",
+  "title": "Example video",
+  "uploader": "Example channel",
+  "description": "An optional description.",
+  "downloaded_date": "2026-09-24"
+}
+```
+````
+
+The browser must be able to stream the supplied media URL; a platform watch-page URL is not itself a playable media stream. Agent instructions preserve `video` blocks found in tool observations so they can reach the renderer unchanged. Registered tools may also return a `{ "video_block": "..." }` wrapper using a one- or three-backtick `video` block; the agent service normalizes it, and the web renderer also recognizes previously saved wrapped responses.
 
 The application endpoints use FastAPI errors such as `{ "detail": "..." }`: 422 for invalid request bodies, 404 for missing records, 409 for closed sessions or inactive configurations, and 502 when configured providers fail.
 

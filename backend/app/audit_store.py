@@ -10,6 +10,9 @@ import threading
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_MAX_BYTES = 10 * 1024 * 1024
+DEFAULT_MAX_ENTRIES = 5
+
 
 class AuditStore:
     """Append request/response records without exposing a public read interface.
@@ -19,11 +22,62 @@ class AuditStore:
     threads or multiple server processes sharing the application database.
     """
 
-    def __init__(self, db_path: Path, enabled: bool = True):
+    def __init__(self, db_path: Path, enabled: bool = True,
+                 max_bytes: int = DEFAULT_MAX_BYTES,
+                 max_entries: int = DEFAULT_MAX_ENTRIES):
         self.db_path = Path(db_path)
         self.enabled = enabled
+        self.max_bytes = max_bytes
+        self.max_entries = max_entries
         self._failure_lock = threading.Lock()
         self._failure_reported = False
+
+    def _prune(self, connection: sqlite3.Connection) -> int:
+        """Delete oldest rows until both retention limits are satisfied."""
+        changes_before = connection.total_changes
+        connection.execute("""
+            DELETE FROM internal_api_audit
+            WHERE rowid IN (
+                SELECT rowid
+                FROM internal_api_audit
+                ORDER BY timestamp DESC, rowid DESC
+                LIMIT -1 OFFSET ?
+            )
+        """, (self.max_entries,))
+        rows = connection.execute("""
+            SELECT rowid, length(CAST(record_json AS BLOB))
+            FROM internal_api_audit
+            ORDER BY timestamp DESC, rowid DESC
+        """).fetchall()
+
+        retained_bytes = 0
+        delete_rowids = []
+        for position, (rowid, record_bytes) in enumerate(rows):
+            # Always retain the newest record. A single complete record may be
+            # larger than max_bytes, just as one JSONL record may exceed the
+            # file rotation target.
+            within_count = position < self.max_entries
+            within_bytes = position == 0 or retained_bytes + record_bytes <= self.max_bytes
+            if within_count and within_bytes:
+                retained_bytes += record_bytes
+            else:
+                delete_rowids.append(rowid)
+
+        if delete_rowids:
+            connection.executemany(
+                "DELETE FROM internal_api_audit WHERE rowid = ?",
+                ((rowid,) for rowid in delete_rowids),
+            )
+        return connection.total_changes - changes_before
+
+    def _compact_if_worthwhile(self, connection: sqlite3.Connection) -> None:
+        """Reclaim disk after a large prune, while avoiding a VACUUM per write."""
+        page_size = connection.execute("PRAGMA page_size").fetchone()[0]
+        page_count = connection.execute("PRAGMA page_count").fetchone()[0]
+        free_pages = connection.execute("PRAGMA freelist_count").fetchone()[0]
+        free_bytes = free_pages * page_size
+        if free_bytes >= self.max_bytes and free_pages * 2 >= page_count:
+            connection.execute("VACUUM")
 
     def write(self, record: dict) -> None:
         if not self.enabled:
@@ -39,6 +93,7 @@ class AuditStore:
         # The context manager for a connection commits/rolls back but does not
         # close it; closing() releases its file handle even when a write fails.
         with closing(sqlite3.connect(str(db_path), timeout=5.0)) as connection:
+            pruned = 0
             with connection:
                 connection.execute("""
                     CREATE TABLE IF NOT EXISTS internal_api_audit (
@@ -71,6 +126,9 @@ class AuditStore:
                     record["path"], record.get("status_code"),
                     selected.get("provider"), selected.get("model"), encoded_record,
                 ))
+                pruned = self._prune(connection)
+            if pruned:
+                self._compact_if_worthwhile(connection)
 
     def report_failure(self, exc: Exception) -> None:
         """Warn once without printing exception messages, paths, or audit data."""

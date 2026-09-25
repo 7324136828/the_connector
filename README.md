@@ -93,7 +93,7 @@ Each record also includes `request.body`, its content type, byte counts, capture
 
 `routing.requested_model` identifies the requested library model alias when supplied. `routing.configuration_id` and `routing.session_id` correlate the library entry or session. `routing.selected` records the successful provider, configured model, selected model, and effort. Structured completions use the upstream-reported model name when available; the text-chat connectors expose the selected configured model. `routing.attempts` records retries, fallback candidates, successes, unsupported routes, elapsed time, and error types. Discovery, configuration management, validation, and session creation do not invoke a model: these records have `routing.performed: false`, no selected model, and no attempts. Routing facts are internal and do not change completion response payloads.
 
-The same record is appended to **`internal_api_audit`** in the existing memory SQLite database (`%TEMP%\the_connector\connector.db` by default, respecting `DB_PATH`). `request_id` correlates the file and database copies. This table is separate from sessions, messages, configuration history, and model memory. It has no UI, public read endpoint, or export feature, and it is never included in prompts or conversation-memory retrieval. Database records persist across restarts and are not deleted when log files rotate or sessions close. No automatic database retention limit is applied.
+The same record is appended to **`internal_api_audit`** in the existing memory SQLite database (`%TEMP%\the_connector\connector.db` by default, respecting `DB_PATH`). `request_id` correlates the file and database copies. This table is separate from sessions, messages, configuration history, and model memory. It has no UI, public read endpoint, or export feature, and it is never included in prompts or conversation-memory retrieval. Database records persist across restarts, but automatic retention keeps at most the five newest records and 10 MiB of serialized audit payload by default. The newest record is always retained, even when that one complete record exceeds the byte target. Large prunes compact the database when doing so will reclaim substantial space.
 
 This is application-level separation, not filesystem access control: the server account and tools with that account's filesystem permissions (including the existing Python execution tool) can read the database. The local application does not isolate records from machine administrators or arbitrary code running as the server.
 
@@ -110,6 +110,8 @@ RESPONSE_LOG_BACKUP_COUNT=5
 RESPONSE_LOG_MAX_BODY_BYTES=0
 REQUEST_LOG_MAX_BODY_BYTES=0
 INTERNAL_AUDIT_ENABLED=true
+INTERNAL_AUDIT_MAX_BYTES=10485760
+INTERNAL_AUDIT_MAX_ENTRIES=5
 ```
 
 With a body limit, oversized requests or responses are stored as text prefixes with `truncated: true` in both destinations; the HTTP payload remains intact. The file and database switches are independent: `RESPONSE_LOGGING_ENABLED=false` disables file output, while `INTERNAL_AUDIT_ENABLED=false` disables database auditing. Failures in one destination do not suppress the other or change the HTTP response. To watch chat completion request/response records in PowerShell after the first request:

@@ -12,6 +12,8 @@ os.environ["RESPONSE_LOG_BACKUP_COUNT"] = "5"
 os.environ["RESPONSE_LOG_MAX_BODY_BYTES"] = "0"
 os.environ["REQUEST_LOG_MAX_BODY_BYTES"] = "0"
 os.environ["INTERNAL_AUDIT_ENABLED"] = "true"
+os.environ["INTERNAL_AUDIT_MAX_BYTES"] = "10485760"
+os.environ["INTERNAL_AUDIT_MAX_ENTRIES"] = "5"
 
 import pytest
 from backend.app import main

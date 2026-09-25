@@ -55,7 +55,12 @@ response_log_writer = ResponseLogWriter(
     settings.response_log_dir, enabled=settings.response_logging_enabled,
     max_bytes=settings.response_log_max_bytes, backup_count=settings.response_log_backup_count,
 )
-internal_audit_store = AuditStore(settings.db_path, enabled=settings.internal_audit_enabled)
+internal_audit_store = AuditStore(
+    settings.db_path,
+    enabled=settings.internal_audit_enabled,
+    max_bytes=settings.internal_audit_max_bytes,
+    max_entries=settings.internal_audit_max_entries,
+)
 
 app = LoggedFastAPI(
     response_log_writer=response_log_writer,

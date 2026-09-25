@@ -64,6 +64,8 @@ class Settings(BaseSettings):
     response_log_max_body_bytes: int = Field(default=0, ge=0)
     request_log_max_body_bytes: int = Field(default=0, ge=0)
     internal_audit_enabled: bool = True
+    internal_audit_max_bytes: int = Field(default=10 * 1024 * 1024, ge=1024)
+    internal_audit_max_entries: int = Field(default=5, ge=1, le=1000)
 
     @model_validator(mode="after")
     def resolve_database_path(self):

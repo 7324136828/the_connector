@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { requestSpeech } from '../services/api';
 
 function CopyButton({ text, label = 'Copy', className = '' }) {
   const [status, setStatus] = useState(label);
@@ -39,6 +40,93 @@ function safeMediaUrl(value) {
 }
 
 const INVALID_JSON_ESCAPE = /\\(?!["\\/bfnrt]|u[0-9a-fA-F]{4})/g;
+
+export function extractSpeechText(content) {
+  if (typeof content !== 'string') return null;
+  try {
+    const decoded = JSON.parse(content);
+    if (!decoded || typeof decoded !== 'object' || Array.isArray(decoded)) return null;
+    return typeof decoded.text === 'string' && decoded.text.trim() ? decoded.text.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+function SpeakButton({ content }) {
+  const [status, setStatus] = useState('idle');
+  const [error, setError] = useState('');
+  const audioRef = useRef(null);
+  const audioUrlRef = useRef(null);
+  const requestRef = useRef(null);
+
+  const releaseAudio = () => {
+    requestRef.current?.abort();
+    requestRef.current = null;
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.onended = null;
+      audioRef.current.onerror = null;
+      audioRef.current = null;
+    }
+    if (audioUrlRef.current) {
+      URL.revokeObjectURL(audioUrlRef.current);
+      audioUrlRef.current = null;
+    }
+  };
+
+  useEffect(() => () => releaseAudio(), [content]);
+
+  const handleSpeak = async () => {
+    if (status === 'playing') {
+      releaseAudio();
+      setStatus('idle');
+      return;
+    }
+    setStatus('loading');
+    setError('');
+    const controller = new AbortController();
+    requestRef.current = controller;
+    try {
+      const blob = await requestSpeech(content, { signal: controller.signal });
+      requestRef.current = null;
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+      audioUrlRef.current = url;
+      audioRef.current = audio;
+      audio.onended = () => {
+        releaseAudio();
+        setStatus('idle');
+      };
+      audio.onerror = () => {
+        releaseAudio();
+        setError('The generated audio could not be played.');
+        setStatus('error');
+      };
+      await audio.play();
+      setStatus('playing');
+    } catch (caught) {
+      releaseAudio();
+      if (caught?.name === 'AbortError') return;
+      setError(caught instanceof Error ? caught.message : 'Speech playback failed.');
+      setStatus('error');
+    }
+  };
+
+  const label = status === 'loading' ? 'Generating speech…'
+    : status === 'playing' ? 'Stop speaking'
+      : status === 'error' ? 'Retry speech' : 'Speak';
+  return (
+    <>
+      <button
+        type="button" className="message-copy message-speak" onClick={handleSpeak}
+        disabled={status === 'loading'} aria-label={label}
+      >
+        {label}
+      </button>
+      {error && <span className="speech-error" role="alert">{error}</span>}
+    </>
+  );
+}
 
 function videoPayload(value) {
   if (value && typeof value === 'object') return JSON.stringify(value);
@@ -149,6 +237,7 @@ export function MessageItem({ message }) {
   const isUser = message.role === 'user';
   const [showSteps, setShowSteps] = useState(false);
   const wrappedVideos = isUser ? null : parseVideoMessage(message.content);
+  const speechText = isUser ? null : extractSpeechText(message.content);
 
   return (
     <div className="message-row">
@@ -176,6 +265,8 @@ export function MessageItem({ message }) {
           {!isUser && message.tokens?.total_tokens && (
             <span>• {message.tokens.total_tokens} tokens</span>
           )}
+
+          {speechText && <SpeakButton content={message.content} />}
 
           {!isUser && (
             <CopyButton text={message.content ?? ''} className="message-copy-all" />

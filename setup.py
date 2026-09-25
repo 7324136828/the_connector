@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Cross-platform automated setup orchestrator for The Connector."""
 
+import argparse
 import os
 import shutil
 import subprocess
@@ -12,6 +13,22 @@ ROOT_DIR = Path(__file__).resolve().parent
 BACKEND_DIR = ROOT_DIR / "backend"
 FRONTEND_DIR = ROOT_DIR / "frontend"
 VENV_DIR = ROOT_DIR / ".venv"
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--with-kokoro",
+        action="store_true",
+        help="also create the isolated Python 3.12 Kokoro environment",
+    )
+    parser.add_argument(
+        "--kokoro-device",
+        choices=("cpu", "cuda"),
+        default="cpu",
+        help="PyTorch build for --with-kokoro (default: cpu)",
+    )
+    return parser.parse_args()
 
 
 def log(msg: str) -> None:
@@ -76,7 +93,21 @@ def setup_env() -> None:
         print("[OK] Existing .env preserved")
 
 
+def install_kokoro(device: str) -> None:
+    log(f"Installing the isolated Kokoro service ({device})...")
+    if os.name == "nt":
+        subprocess.check_call([
+            "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass",
+            "-File", str(ROOT_DIR / "python-kokoro" / "setup.ps1"),
+            "-Device", device,
+        ])
+    else:
+        subprocess.check_call(["bash", str(ROOT_DIR / "setup_kokoro.sh"), device])
+    print("[OK] Kokoro speech service installed successfully")
+
+
 def main() -> None:
+    args = parse_args()
     print("=" * 60)
     print("  The Connector - Automated Environment Provisioning")
     print("=" * 60)
@@ -86,6 +117,8 @@ def main() -> None:
     install_backend(py_bin)
     install_frontend()
     setup_env()
+    if args.with_kokoro:
+        install_kokoro(args.kokoro_device)
 
     log("Setup completed successfully!")
     print("\nNext steps:")
@@ -93,6 +126,8 @@ def main() -> None:
         print("  Run: run.bat to start both Frontend & Backend")
     else:
         print("  Run: ./run.sh to start both Frontend & Backend")
+    if not args.with_kokoro:
+        print("  Optional speech: rerun setup with --with-kokoro (requires Python 3.12)")
     print("=" * 60)
 
 

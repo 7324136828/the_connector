@@ -9,7 +9,7 @@ from fastapi import Body, HTTPException, Query, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 
 from .config import settings
 from .response_logging import LoggedFastAPI, ResponseLogWriter
@@ -31,6 +31,7 @@ from .schemas.chat import (
     NewSessionResponse,
     SessionDetail,
     SessionSummary,
+    SpeechRequest,
     TokenUsageInfo,
     UpdateSessionRequest,
 )
@@ -40,6 +41,7 @@ from .services import (
     agent_service,
     router,
     session_manager,
+    speech_service,
     temp_manager,
 )
 from .services.connectors import list_ollama_models
@@ -108,6 +110,20 @@ def health_check() -> Dict[str, Any]:
             "mock": True,
         },
     }
+
+
+@app.post("/api/speech")
+def create_speech(req: SpeechRequest) -> Response:
+    """Speak only the top-level ``text`` field from a valid JSON model response."""
+    try:
+        audio = speech_service.synthesize_json_text(req.content)
+    except speech_service.InvalidSpeechContent as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except speech_service.SpeechServiceUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except speech_service.SpeechSynthesisError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return Response(content=audio.content, media_type="audio/wav", headers=audio.headers)
 
 
 # ==========================================

@@ -12,5 +12,5 @@ if ! command -v python3 &> /dev/null; then
 fi
 
 echo "[SETUP.SH] Dispatching setup.py..."
-python3 setup.py
+python3 setup.py "$@"
 echo "[SETUP.SH] Setup finished successfully."

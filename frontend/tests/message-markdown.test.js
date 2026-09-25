@@ -7,10 +7,11 @@ import { createServer as createHttpServer } from 'node:http';
 
 let server;
 let MessageItem;
+let extractSpeechText;
 
 before(async () => {
   server = await createServer({ server: { middlewareMode: true, hmr: { server: createHttpServer() } }, appType: 'custom' });
-  ({ MessageItem } = await server.ssrLoadModule('/src/components/MessageItem.jsx'));
+  ({ MessageItem, extractSpeechText } = await server.ssrLoadModule('/src/components/MessageItem.jsx'));
 });
 
 after(async () => {
@@ -108,4 +109,18 @@ test('agent reasoning trace is retained but collapsed by default', () => {
   assert.match(html, /Expand/);
   assert.doesNotMatch(html, /Internal reasoning summary|step-card/);
   assert.match(html, /Final answer only\./);
+});
+
+test('speech is offered only for a valid JSON object with a text string', () => {
+  assert.equal(extractSpeechText('{"text":"  Read only this.  ","thought":"Do not read this."}'), 'Read only this.');
+  assert.equal(extractSpeechText('plain model response'), null);
+  assert.equal(extractSpeechText('{"final_answer":"Not the text field"}'), null);
+  assert.equal(extractSpeechText('{"text":42}'), null);
+  assert.equal(extractSpeechText('```json\n{"text":"fenced"}\n```'), null);
+
+  const speakable = render('{"text":"Read only this.","thought":"Do not read this."}');
+  assert.match(speakable, />Speak<\/button>/);
+  assert.doesNotMatch(render('plain model response'), />Speak<\/button>/);
+  assert.doesNotMatch(render('{"final_answer":"No speech"}'), />Speak<\/button>/);
+  assert.doesNotMatch(render('{"text":"User text"}', { role: 'user' }), />Speak<\/button>/);
 });

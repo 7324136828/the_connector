@@ -92,6 +92,12 @@ class ChatResponse(BaseModel):
     created_at: str
 
 
+class SpeechRequest(BaseModel):
+    """An unmodified assistant response considered for speech synthesis."""
+    model_config = ConfigDict(extra="forbid")
+    content: str = Field(..., min_length=1, max_length=2 * 1024 * 1024)
+
+
 class CloseSessionRequest(BaseModel):
     """Request to close or delete a session."""
     session_id: str

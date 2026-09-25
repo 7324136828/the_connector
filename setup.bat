@@ -14,7 +14,7 @@ if %errorlevel% neq 0 (
 )
 
 echo [SETUP.BAT] Dispatching setup.py...
-python setup.py
+python setup.py %*
 if %errorlevel% neq 0 (
     echo [SETUP.BAT] Error: Setup failed with code %errorlevel%.
     pause

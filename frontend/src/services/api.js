@@ -83,6 +83,21 @@ export function runAgent({ prompt, sessionId }) {
   return request('/agent/run', { method: 'POST', body: { prompt, session_id: sessionId } });
 }
 
+export async function requestSpeech(content, { signal } = {}) {
+  const response = await fetch(BASE_URL + '/speech', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content }),
+    signal,
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => null);
+    throw new Error(describeError(data?.detail || data?.error)
+      || 'Speech request failed (' + response.status + ' ' + response.statusText + ')');
+  }
+  return response.blob();
+}
+
 export function getAgentTools() { return request('/agent/tools'); }
 export function getHealth() { return request('/health'); }
 export function getExportZipUrl(sessionId) {

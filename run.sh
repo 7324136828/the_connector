@@ -13,6 +13,7 @@ source .venv/bin/activate
 echo "========================================================"
 echo "Starting The Connector Full-Stack Services"
 echo "Backend:  http://localhost:8301 (API & Docs: /docs)"
+echo "Kokoro:  http://localhost:8302 (when installed)"
 echo "Frontend: http://localhost:5173"
 echo "========================================================"
 
@@ -28,6 +29,14 @@ trap cleanup SIGINT SIGTERM EXIT
 # Start backend in background
 python run_backend.py --reload &
 BACKEND_PID=$!
+
+# Start the isolated Kokoro backend when its dedicated environment is installed.
+if [ -x "python-kokoro/.venv/bin/python" ]; then
+    bash ./run_kokoro.sh &
+    KOKORO_PID=$!
+else
+    echo "[RUN.SH] Kokoro is not installed; run ./setup.sh --with-kokoro to enable speech."
+fi
 
 # Start frontend in foreground
 (cd frontend && npm run dev) &

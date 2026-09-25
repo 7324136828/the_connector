@@ -1,0 +1,4 @@
+# Install separately from requirements.txt, into the Python 3.12 service environment.
+# Official CUDA 12.8 build; also supports this machine's RTX 5070 Laptop GPU.
+--index-url https://download.pytorch.org/whl/cu128
+torch==2.11.0+cu128

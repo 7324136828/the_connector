@@ -41,13 +41,13 @@ The launcher loads the repository `.env` without replacing existing environment 
 The backend-only launchers accept `--host`, `--port`, and `--reload`:
 
 ```cmd
-run_backend.bat --port 8302 --reload
+run_backend.bat --port 8401 --reload
 ```
 
 ```bash
-bash run_backend.sh --port 8302 --reload
+bash run_backend.sh --port 8401 --reload
 # Equivalent with an activated Python environment:
-python run_backend.py --host 127.0.0.1 --port 8302 --reload
+python run_backend.py --host 127.0.0.1 --port 8401 --reload
 ```
 
 `--reload` is for backend development. Changing the port also requires updating client base URLs.
@@ -117,6 +117,32 @@ Get-Content -LiteralPath "$env:TEMP\the_connector\logs\post_api_chat_completions
 ## Run the full application
 
 For the web UI, run `setup.bat` then `run.bat` on Windows. On Linux/macOS, run `chmod +x setup.sh run.sh`, then `./setup.sh` and `./run.sh`. Setup installs Python and Node dependencies. The full application uses frontend **http://localhost:5173** and backend **http://127.0.0.1:8301**. Vite proxies `/api` to port 8301; update `frontend/vite.config.js` if you change the backend port. On Windows the full-stack launcher opens a backend console; close that console or press Ctrl+C in it when finished.
+
+### Optional Kokoro speech backend
+
+Kokoro runs in a separate Python 3.12 environment and listens on **http://127.0.0.1:8302** by default. Installing it is opt-in because the PyTorch packages are large. Use CPU unless you have a compatible NVIDIA/CUDA setup:
+
+```cmd
+setup.bat --with-kokoro --kokoro-device cpu
+:: Or install only speech support:
+setup_kokoro.bat -Device cpu
+```
+
+```bash
+./setup.sh --with-kokoro --kokoro-device cpu
+# Or install only speech support:
+bash setup_kokoro.sh cpu
+```
+
+After its environment exists, `run.bat` or `run.sh` starts Kokoro alongside the API and frontend. It can also be run independently with `run_kokoro.bat` or `bash run_kokoro.sh`. The first speech request may download the Kokoro model and language data.
+
+Assistant messages get a **Speak** control only when the complete model response is valid JSON with a non-empty, top-level string field named `text`, for example:
+
+```json
+{"text":"This sentence can be spoken.","metadata":"This field is never spoken."}
+```
+
+Plain text, Markdown-fenced JSON, arrays, invalid JSON, and objects without a string `text` field are not eligible. The frontend sends the original response to `POST /api/speech`, and the main API independently parses it before forwarding only `text` to Kokoro. Configure the adapter in `.env` with `KOKORO_BASE_URL`, `KOKORO_VOICE`, `KOKORO_LANGUAGE`, `KOKORO_SPEED`, and `KOKORO_TIMEOUT`; restart the main backend after a change.
 
 ## Start a conversation
 

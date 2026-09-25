@@ -700,6 +700,16 @@ input:checked + .slider:before {
   color: var(--text-muted);
 }
 
+.message-speak:disabled {
+  cursor: wait;
+}
+
+.speech-error {
+  color: #fca5a5;
+  font-size: 0.72rem;
+  max-width: min(100%, 460px);
+}
+
 /* Agent Step Accordion */
 .agent-steps-wrapper {
   background-color: rgba(139, 92, 246, 0.06);

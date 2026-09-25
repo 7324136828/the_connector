@@ -96,9 +96,9 @@ async def validation_error_handler(request: Request, exc: RequestValidationError
 
 
 @app.get("/api/health")
-def health_check() -> Dict[str, Any]:
-    """System health check and provider readiness."""
-    return {
+def health_check():
+    """System readiness check, including the required Kokoro backend."""
+    payload = {
         "status": "ok",
         "version": settings.app_version,
         "providers_status": {
@@ -110,13 +110,24 @@ def health_check() -> Dict[str, Any]:
             "mock": True,
         },
     }
+    try:
+        payload["speech"] = {"required": True, **speech_service.health()}
+    except (speech_service.SpeechServiceUnavailable, speech_service.SpeechSynthesisError) as exc:
+        payload["status"] = "unavailable"
+        payload["speech"] = {
+            "required": True,
+            "status": "unavailable",
+            "detail": str(exc),
+        }
+        return JSONResponse(status_code=503, content=payload)
+    return payload
 
 
 @app.post("/api/speech")
 def create_speech(req: SpeechRequest) -> Response:
-    """Speak only the top-level ``text`` field from a valid JSON model response."""
+    """Speak plain model text, or only ``text`` from a JSON model response."""
     try:
-        audio = speech_service.synthesize_json_text(req.content)
+        audio = speech_service.synthesize_text(req.content)
     except speech_service.InvalidSpeechContent as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except speech_service.SpeechServiceUnavailable as exc:
@@ -124,6 +135,17 @@ def create_speech(req: SpeechRequest) -> Response:
     except speech_service.SpeechSynthesisError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     return Response(content=audio.content, media_type="audio/wav", headers=audio.headers)
+
+
+@app.get("/api/speech/health")
+def speech_health() -> Dict[str, Any]:
+    """Verify the Connector's required Kokoro backend for external callers."""
+    try:
+        return speech_service.health()
+    except speech_service.SpeechServiceUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except speech_service.SpeechSynthesisError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 # ==========================================

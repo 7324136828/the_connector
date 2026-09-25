@@ -42,13 +42,13 @@ function safeMediaUrl(value) {
 const INVALID_JSON_ESCAPE = /\\(?!["\\/bfnrt]|u[0-9a-fA-F]{4})/g;
 
 export function extractSpeechText(content) {
-  if (typeof content !== 'string') return null;
+  if (typeof content !== 'string' || !content.trim()) return null;
   try {
     const decoded = JSON.parse(content);
     if (!decoded || typeof decoded !== 'object' || Array.isArray(decoded)) return null;
     return typeof decoded.text === 'string' && decoded.text.trim() ? decoded.text.trim() : null;
   } catch {
-    return null;
+    return content.trim();
   }
 }
 
@@ -237,7 +237,7 @@ export function MessageItem({ message }) {
   const isUser = message.role === 'user';
   const [showSteps, setShowSteps] = useState(false);
   const wrappedVideos = isUser ? null : parseVideoMessage(message.content);
-  const speechText = isUser ? null : extractSpeechText(message.content);
+  const hasSpeechContent = !isUser && typeof message.content === 'string' && Boolean(message.content.trim());
 
   return (
     <div className="message-row">
@@ -266,7 +266,7 @@ export function MessageItem({ message }) {
             <span>• {message.tokens.total_tokens} tokens</span>
           )}
 
-          {speechText && <SpeakButton content={message.content} />}
+          {hasSpeechContent && <SpeakButton content={message.content} />}
 
           {!isUser && (
             <CopyButton text={message.content ?? ''} className="message-copy-all" />

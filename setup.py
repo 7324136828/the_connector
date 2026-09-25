@@ -18,15 +18,10 @@ VENV_DIR = ROOT_DIR / ".venv"
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--with-kokoro",
-        action="store_true",
-        help="also create the isolated Python 3.12 Kokoro environment",
-    )
-    parser.add_argument(
         "--kokoro-device",
         choices=("cpu", "cuda"),
         default="cpu",
-        help="PyTorch build for --with-kokoro (default: cpu)",
+        help="required Kokoro PyTorch build (default: cpu)",
     )
     return parser.parse_args()
 
@@ -45,6 +40,18 @@ def check_prerequisites() -> None:
     if not shutil.which(npm_bin) and not shutil.which("npm"):
         sys.exit("Error: Node.js and npm are required. Please install Node.js.")
     print("[OK] Node.js & npm detected")
+
+    kokoro_python = ["py", "-3.12"] if os.name == "nt" else ["python3.12"]
+    try:
+        result = subprocess.run(
+            [*kokoro_python, "-c", "import sys; print(sys.version.split()[0])"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (FileNotFoundError, subprocess.CalledProcessError) as exc:
+        raise SystemExit("Error: Python 3.12 is required for the Kokoro speech service.") from exc
+    print(f"[OK] Kokoro Python version: {result.stdout.strip()}")
 
 
 def create_virtualenv() -> tuple[Path, Path]:
@@ -117,17 +124,14 @@ def main() -> None:
     install_backend(py_bin)
     install_frontend()
     setup_env()
-    if args.with_kokoro:
-        install_kokoro(args.kokoro_device)
+    install_kokoro(args.kokoro_device)
 
     log("Setup completed successfully!")
     print("\nNext steps:")
     if os.name == "nt":
-        print("  Run: run.bat to start both Frontend & Backend")
+        print("  Run: run.bat to start Frontend, Connector API, and Kokoro")
     else:
-        print("  Run: ./run.sh to start both Frontend & Backend")
-    if not args.with_kokoro:
-        print("  Optional speech: rerun setup with --with-kokoro (requires Python 3.12)")
+        print("  Run: ./run.sh to start Frontend, Connector API, and Kokoro")
     print("=" * 60)
 
 

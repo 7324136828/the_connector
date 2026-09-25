@@ -111,16 +111,17 @@ test('agent reasoning trace is retained but collapsed by default', () => {
   assert.match(html, /Final answer only\./);
 });
 
-test('speech is offered only for a valid JSON object with a text string', () => {
+test('speech is offered for every non-empty assistant response', () => {
   assert.equal(extractSpeechText('{"text":"  Read only this.  ","thought":"Do not read this."}'), 'Read only this.');
-  assert.equal(extractSpeechText('plain model response'), null);
+  assert.equal(extractSpeechText('  plain model response  '), 'plain model response');
   assert.equal(extractSpeechText('{"final_answer":"Not the text field"}'), null);
   assert.equal(extractSpeechText('{"text":42}'), null);
-  assert.equal(extractSpeechText('```json\n{"text":"fenced"}\n```'), null);
+  assert.equal(extractSpeechText('```json\n{"text":"fenced"}\n```'), '```json\n{"text":"fenced"}\n```');
 
   const speakable = render('{"text":"Read only this.","thought":"Do not read this."}');
   assert.match(speakable, />Speak<\/button>/);
-  assert.doesNotMatch(render('plain model response'), />Speak<\/button>/);
-  assert.doesNotMatch(render('{"final_answer":"No speech"}'), />Speak<\/button>/);
+  assert.match(render('plain model response'), />Speak<\/button>/);
+  assert.match(render('{"final_answer":"Unsupported JSON reports an error after click"}'), />Speak<\/button>/);
+  assert.doesNotMatch(render(''), />Speak<\/button>/);
   assert.doesNotMatch(render('{"text":"User text"}', { role: 'user' }), />Speak<\/button>/);
 });

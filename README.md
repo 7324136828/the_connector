@@ -1,10 +1,10 @@
 ﻿# The Connector
 
-A React and FastAPI chat application connecting OpenAI, Claude, Gemini, OpenRouter, Ollama, and a local mock provider. Save named routing configurations and expose active entries as OpenAI-compatible models for Hermes or other agent clients. Web chat sessions retain their own `config.json` snapshots, including routing, effort, system prompt, and memory settings.
+A React and FastAPI chat application connecting OpenAI, Claude, Gemini, OpenRouter, Ollama, and a local mock provider, with a required isolated Kokoro speech backend. Save named routing configurations and expose active entries as OpenAI-compatible models for Hermes or other agent clients. Web chat sessions retain their own `config.json` snapshots, including routing, effort, system prompt, and memory settings.
 
 ## Run the backend only
 
-For Hermes or API clients, Python and the backend dependencies are sufficient; Node and the frontend are not required. Run these commands from the repository directory.
+For Hermes or API clients, Node and the frontend are not required, but both the Connector API environment and the required Python 3.12 Kokoro environment must be installed. Run these commands from the repository directory.
 
 Windows Command Prompt:
 
@@ -12,6 +12,8 @@ Windows Command Prompt:
 py -m venv .venv
 .venv\Scripts\python.exe -m pip install -r backend\requirements.txt
 if not exist .env copy .env.example .env
+setup_kokoro.bat -Device cpu
+start "The Connector Kokoro Speech" cmd /k "call run_kokoro.bat"
 run_backend.bat
 ```
 
@@ -21,10 +23,12 @@ Linux, macOS, or WSL:
 python3 -m venv .venv
 .venv/bin/python -m pip install -r backend/requirements.txt
 test -f .env || cp .env.example .env
+bash setup_kokoro.sh cpu
+bash run_kokoro.sh &
 bash run_backend.sh
 ```
 
-The default address is **http://127.0.0.1:8301**, with interactive documentation at **http://127.0.0.1:8301/docs** and the OpenAI base URL **http://127.0.0.1:8301/v1**. The batch and shell wrappers prefer the repository's virtual environment. Stop the server with Ctrl+C.
+The Connector API defaults to **http://127.0.0.1:8301**, with interactive documentation at **http://127.0.0.1:8301/docs** and the OpenAI base URL **http://127.0.0.1:8301/v1**. The internal Kokoro process defaults to **http://127.0.0.1:8302**. The batch and shell wrappers prefer their respective repository virtual environments. Stop both processes when finished.
 
 Add credentials for the upstream providers you intend to use to `.env`, then restart the backend:
 
@@ -116,33 +120,65 @@ Get-Content -LiteralPath "$env:TEMP\the_connector\logs\post_api_chat_completions
 
 ## Run the full application
 
-For the web UI, run `setup.bat` then `run.bat` on Windows. On Linux/macOS, run `chmod +x setup.sh run.sh`, then `./setup.sh` and `./run.sh`. Setup installs Python and Node dependencies. The full application uses frontend **http://localhost:5173** and backend **http://127.0.0.1:8301**. Vite proxies `/api` to port 8301; update `frontend/vite.config.js` if you change the backend port. On Windows the full-stack launcher opens a backend console; close that console or press Ctrl+C in it when finished.
+For the web UI, run `setup.bat` then `run.bat` on Windows. On Linux/macOS, run `chmod +x setup.sh run.sh`, then `./setup.sh` and `./run.sh`. Python 3.12 is required. Setup installs the main Python environment, frontend dependencies, and the separate Kokoro environment; Kokoro uses the CPU build by default. Select CUDA explicitly with `setup.bat --kokoro-device cuda` or `./setup.sh --kokoro-device cuda`. The full application uses frontend **http://localhost:5173**, the Connector API at **http://127.0.0.1:8301**, and Kokoro at **http://127.0.0.1:8302**. Vite proxies `/api` to port 8301. On Windows the full-stack launcher opens separate Connector and Kokoro consoles; close both when finished.
 
-### Optional Kokoro speech backend
+### Kokoro speech skill (required)
 
-Kokoro runs in a separate Python 3.12 environment and listens on **http://127.0.0.1:8302** by default. Installing it is opt-in because the PyTorch packages are large. Use CPU unless you have a compatible NVIDIA/CUDA setup:
+Kokoro is a required Connector service. It remains isolated in its own Python 3.12 environment because its PyTorch dependencies differ from the main API. `run.bat` and `run.sh` refuse to start the application when that environment is missing, and then launch Kokoro on port 8302 alongside the Connector.
 
-```cmd
-setup.bat --with-kokoro --kokoro-device cpu
-:: Or install only speech support:
-setup_kokoro.bat -Device cpu
-```
+External services must call the Connector on port 8301 rather than calling Kokoro directly. This preserves the model-response parsing rules and keeps the internal synthesis process on loopback.
 
-```bash
-./setup.sh --with-kokoro --kokoro-device cpu
-# Or install only speech support:
-bash setup_kokoro.sh cpu
-```
+#### Skill contract: `kokoro_speak`
 
-After its environment exists, `run.bat` or `run.sh` starts Kokoro alongside the API and frontend. It can also be run independently with `run_kokoro.bat` or `bash run_kokoro.sh`. The first speech request may download the Kokoro model and language data.
+| Property | Contract |
+| --- | --- |
+| Purpose | Convert a plain-text model response, or the `text` field of a JSON model response, into WAV speech |
+| Readiness | `GET /api/speech/health` returns HTTP 200 only for a verified healthy `python-kokoro` process |
+| Invocation | `POST /api/speech` with `Content-Type: application/json` |
+| Input | `{ "content": "<the complete, unmodified model-response string>" }` |
+| Accepted model response | Non-empty plain text, or a JSON object with a non-empty, top-level string field named `text` |
+| Output | `audio/wav` bytes; optional timing headers include `X-Audio-Duration`, `X-Render-Seconds`, and `X-Real-Time-Factor` |
+| Rejection | HTTP 422 for empty content or a valid JSON value without an eligible `text`; 503 when Kokoro is unreachable; 502 for an invalid Kokoro response |
 
-Assistant messages get a **Speak** control only when the complete model response is valid JSON with a non-empty, top-level string field named `text`, for example:
+Because the skill is required, the overall `GET /api/health` endpoint also returns HTTP 503 with `status: "unavailable"` when Kokoro is not healthy.
+
+Plain-text responses are spoken as-is. When the complete response is JSON, it must look like this before it is placed in the request's `content` string:
 
 ```json
 {"text":"This sentence can be spoken.","metadata":"This field is never spoken."}
 ```
 
-Plain text, Markdown-fenced JSON, arrays, invalid JSON, and objects without a string `text` field are not eligible. The frontend sends the original response to `POST /api/speech`, and the main API independently parses it before forwarding only `text` to Kokoro. Configure the adapter in `.env` with `KOKORO_BASE_URL`, `KOKORO_VOICE`, `KOKORO_LANGUAGE`, `KOKORO_SPEED`, and `KOKORO_TIMEOUT`; restart the main backend after a change.
+Only `This sentence can be spoken.` is synthesized from that JSON object; metadata is never read aloud. JSON arrays, scalar JSON values, and objects without a string `text` field are rejected by the speech endpoint. The web UI shows **Speak** for every non-empty assistant response; clicking it on an unsupported JSON shape displays the validation error without sending content to Kokoro.
+
+An external Python service can invoke the skill through the Connector:
+
+```python
+import json
+from pathlib import Path
+
+import httpx
+
+connector = "http://127.0.0.1:8301"
+model_response = "This plain-text response is sent to Kokoro."
+
+# JSON responses are also accepted; only their top-level text field is spoken:
+# model_response = json.dumps({
+#     "text": "This sentence is sent to Kokoro.",
+#     "metadata": "This value is not spoken.",
+# })
+
+health = httpx.get(f"{connector}/api/speech/health", timeout=5)
+health.raise_for_status()
+speech = httpx.post(
+    f"{connector}/api/speech",
+    json={"content": model_response},
+    timeout=120,
+)
+speech.raise_for_status()
+Path("response.wav").write_bytes(speech.content)
+```
+
+The first speech request may download the Kokoro model and English language data. Configure the internal adapter in `.env` with `KOKORO_BASE_URL`, `KOKORO_VOICE`, `KOKORO_LANGUAGE`, `KOKORO_SPEED`, and `KOKORO_TIMEOUT`; restart the Connector after a change. Keep port 8302 private. If an external service runs on another machine, start only the Connector API with an intentional network bind such as `run_backend.bat --host 0.0.0.0`, restrict access with a firewall or reverse proxy, and leave Kokoro bound to `127.0.0.1`. The Connector has no inbound authentication by default.
 
 ## Start a conversation
 

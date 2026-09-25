@@ -20,7 +20,10 @@ def session(config=None, **fields):
     return response.json()["session_id"]
 
 
-def test_health_and_config_download():
+def test_health_and_config_download(monkeypatch):
+    monkeypatch.setattr(main.speech_service, "health", lambda: {
+        "status": "ok", "service": "python-kokoro", "device": "cpu"
+    })
     assert client.get("/api/health").json()["status"] == "ok"
     example = client.get("/api/config/example")
     assert example.status_code == 200

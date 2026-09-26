@@ -19,6 +19,8 @@ import pytest
 from backend.app import main
 from backend.app.services.session_manager import SessionManager
 from backend.app.services.configuration_manager import ConfigurationManager
+from backend.app.services.skill_manager import SkillManager
+from backend.app.services.agent_service import AgentService
 from backend.app.api import configurations, compatibility, configuration_history
 
 
@@ -31,6 +33,9 @@ def isolate_api_database(monkeypatch, tmp_path):
     monkeypatch.setattr(compatibility, "session_manager", manager)
     monkeypatch.setattr(main, "list_ollama_models", lambda *args: [])
     library = ConfigurationManager(tmp_path / "sessions.db")
+    skills = SkillManager(tmp_path / "sessions.db")
+    monkeypatch.setattr(main, "skill_manager", skills)
+    monkeypatch.setattr(main, "agent_service", AgentService(skills))
     for module in (main, configurations, compatibility):
         monkeypatch.setattr(module, "configuration_manager", library)
     for module in (main, configuration_history):

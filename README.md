@@ -122,7 +122,7 @@ Get-Content -LiteralPath "$env:TEMP\the_connector\logs\post_api_chat_completions
 
 ## Run the full application
 
-For the web UI, run `setup.bat` then `run.bat` on Windows. On Linux/macOS, run `chmod +x setup.sh run.sh`, then `./setup.sh` and `./run.sh`. Python 3.12 is required. Setup installs the main Python environment, frontend dependencies, and the separate Kokoro environment; Kokoro uses the CPU build by default. Select CUDA explicitly with `setup.bat --kokoro-device cuda` or `./setup.sh --kokoro-device cuda`. The full application uses frontend **http://localhost:5173**, the Connector API at **http://127.0.0.1:8301**, and Kokoro at **http://127.0.0.1:8302**. Vite proxies `/api` to port 8301. On Windows the full-stack launcher opens separate Connector and Kokoro consoles; close both when finished.
+For the web UI, run `setup.bat` then `run.bat` on Windows. On Linux/macOS, run `chmod +x setup.sh run.sh`, then `./setup.sh` and `./run.sh`. Python 3.12 is required. Setup installs the main Python environment, frontend dependencies, and the separate Kokoro environment; Kokoro uses the CPU build by default. Select CUDA explicitly with `setup.bat --kokoro-device cuda` or `./setup.sh --kokoro-device cuda`. The full application uses frontend **http://localhost:5173**, the Connector API at **http://127.0.0.1:8301**, and Kokoro at **http://127.0.0.1:8302**. Vite proxies `/api` to port 8301. On Windows all three services share the `run.bat` console; press Ctrl+C or close that window to stop the full stack.
 
 ### Kokoro speech skill (required)
 
@@ -448,7 +448,19 @@ The reply includes the assistant content, selected provider/model, token usage, 
 
 `max_steps` accepts 1-15 and defaults to 5; an optional `tools` list selects the tools described to the agent. The response includes tool steps and a final answer, which is saved in the session. If a structured response has `final_answer: null` without a registered tool action, the Connector re-prompts according to `agent_final_retries` (default 5). If every retry remains incomplete, the last response is displayed as a formatted JSON code block for inspection. This retry value is editable under **Agent settings** in the configuration screen. In the web chat, the reasoning and tool trace is retained in a collapsed panel and expands only when the user selects it. Neither chat nor agent requests accept provider/model overrides.
 
-`GET /api/agent/tools` lists available tool schemas. `POST /api/agent/step` executes `{ "tool": "calculator", "arguments": { "expression": "25 * 4" } }`. `POST /api/agent/register-tool` registers a named tool schema and optional external webhook endpoint.
+`GET /api/agent/tools` lists available tool schemas. There are only two built-in native tools: `run_python_script` and `create_skill_from_conversation`. `POST /api/agent/step` can execute Python with `{ "tool": "run_python_script", "arguments": { "code": "print(25 * 4)" } }`. `POST /api/agent/register-tool` still registers an external plugin webhook, which is identified separately from native and persisted skills.
+
+Reusable Python skills are persisted in the SQLite `skills` table and loaded into the agent registry on startup. Each record stores its name, description, JSON parameter schema, generated Python source, original pasted conversation, and timestamps. The Python source must define `run(args)`.
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /api/skills` | List persisted skills |
+| `POST /api/skills/from-conversation` | Generate and save a skill with the model/config attached to `session_id` |
+| `POST /api/skills` | Save an already-generated skill definition |
+| `PATCH /api/skills/{id}` | Edit a skill's name, description, parameter schema, Python source, or source conversation |
+| `DELETE /api/skills/{id}` | Delete a persisted skill and unload it from the active registry |
+
+The **Agent Skills** dialog provides the conversation-paste workflow, persisted-skill list, full editing, deletion, and direct execution test bench. Saved edits immediately refresh the callable agent registry and remain available after restart. Python execution uses a separate process with a five-second timeout, but it is not an operating-system security sandbox; only create or run code you trust.
 
 The chat renderer recognizes fenced `video` blocks returned in assistant text. A block contains one JSON object or an array of up to 20 objects. `url` (also `src`, `video_url`, or `play_url`) is required; `thumbnail`/`poster`, `title`, `description`, `uploader`, and `downloaded_date` are optional. HTTP(S) and same-origin relative media URLs are accepted; unsafe schemes remain visible as ordinary code rather than being loaded. For example:
 

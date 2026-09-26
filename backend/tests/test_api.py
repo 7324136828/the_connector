@@ -1,5 +1,6 @@
 """API regressions for config ownership, routing, effort, and saved memory."""
 from copy import deepcopy
+import importlib
 import json
 import pytest
 from fastapi.testclient import TestClient
@@ -9,6 +10,7 @@ from backend.app.services.connectors.common import ChatAPIError
 
 client = TestClient(main.app)
 MOCK_CONFIG = {"sequences": [{"provider": "mock", "model": "mock-assistant", "retries": 0}]}
+router_module = importlib.import_module("backend.app.services.router")
 
 
 def session(config=None, **fields):
@@ -222,7 +224,10 @@ def test_agent_uses_session_config_and_memory(monkeypatch):
     assert calls[-1]["config"]["sequences"][0]["provider"] == "mock"
     assert any("Juniper" in m["content"] for m in calls[-1]["messages"])
     assert client.post("/api/agent/run", json={"prompt": "test", "provider": "mock"}).status_code == 422
-    assert client.post("/api/agent/step", json={"tool": "calculator", "arguments": {"expression": "25 * 4 + 15"}}).json()["result"] == "115"
+    assert client.post(
+        "/api/agent/step",
+        json={"tool": "run_python_script", "arguments": {"code": "print(25 * 4 + 15)"}},
+    ).json()["result"] == "115"
 
 
 def test_agent_returns_only_final_answer_from_json_with_markdown_escapes(monkeypatch):
@@ -346,3 +351,19 @@ def test_router_preserves_efforts_on_retries_probability_and_fallback(monkeypatc
         router.route_chat(messages=[{"role": "user", "content": "test"}], config={"sequences": config["sequences"][:1]})
     with pytest.raises(ChatAPIError, match="config.json"):
         router.route_chat(messages=[{"role": "user", "content": "test"}])
+
+
+def test_router_omits_implicit_temperature_for_openai(monkeypatch):
+    router = Router()
+    captured = {}
+    monkeypatch.setattr(router_module, "create_openai_client", lambda timeout: object())
+
+    def complete(client, **kwargs):
+        captured.update(kwargs)
+        return "OK"
+
+    monkeypatch.setattr(router_module, "openai_chat", complete)
+    assert router._execute_single_provider(
+        provider="openai", model="gpt-future", messages=[{"role": "user", "content": "test"}],
+    ) == "OK"
+    assert captured["temperature"] is None

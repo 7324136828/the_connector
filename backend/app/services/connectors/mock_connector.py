@@ -48,7 +48,7 @@ def mock_chat(
     elif any(op in query for op in ["+", "-", "*", "/", "calculate", "solve", "math"]):
         reply = (
             f"I noticed a computation request in your prompt: '{last_user_msg}'. "
-            "In Agentic Mode, I can dispatch our built-in `calculator` or `python_interpreter` tools."
+            "In Agentic Mode, I can run Python or create a persisted skill from a pasted conversation."
         )
     else:
         reply = (

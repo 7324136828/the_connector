@@ -28,14 +28,8 @@ echo Kokoro:  http://localhost:8302 (required speech backend)
 echo Frontend: http://localhost:5173
 echo ========================================================
 
-:: Start backend in background or separate window
-start "The Connector Backend API" cmd /k "call run_backend.bat --reload"
-
-:: Start the required isolated Kokoro backend.
-start "The Connector Kokoro Speech" cmd /k "call run_kokoro.bat"
-
-:: Start frontend in this terminal
-cd frontend
-call npm run dev
-
-echo [RUN.BAT] Shutting down...
+:: Keep all three services in this console. The PowerShell supervisor also
+:: tears down each service's child processes when this launcher stops.
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0run.ps1"
+set "RUN_EXIT_CODE=%errorlevel%"
+exit /b %RUN_EXIT_CODE%

@@ -139,6 +139,7 @@ class AgentToolDefinition(BaseModel):
     name: str
     description: str
     parameters: Dict[str, Any]
+    kind: str = "plugin"
 
 
 class AgentRegisterToolRequest(BaseModel):

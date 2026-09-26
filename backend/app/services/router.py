@@ -55,7 +55,7 @@ class Router:
         messages: List[Dict[str, str]],
         system_prompt: str = "",
         max_output_tokens: int = -1,
-        temperature: float = 0.7,
+        temperature: Optional[float] = None,
         timeout: float = 60.0,
         effort: Optional[str] = None,
     ) -> str:
@@ -88,7 +88,7 @@ class Router:
                 messages=messages,
                 system_prompt=system_prompt,
                 max_output_tokens=max_output_tokens,
-                temperature=temperature,
+                temperature=0.7 if temperature is None else temperature,
                 effort=effort,
             )
 
@@ -104,7 +104,7 @@ class Router:
                 messages=messages,
                 system_prompt=system_prompt,
                 max_output_tokens=max_output_tokens,
-                temperature=temperature,
+                temperature=0.7 if temperature is None else temperature,
                 effort=effort,
                 timeout=timeout,
             )
@@ -116,7 +116,7 @@ class Router:
                 messages=messages,
                 system_prompt=system_prompt,
                 max_output_tokens=max_output_tokens,
-                temperature=temperature,
+                temperature=0.7 if temperature is None else temperature,
                 effort=effort,
                 timeout=timeout,
             )
@@ -133,7 +133,7 @@ class Router:
                 messages=messages,
                 system_prompt=system_prompt,
                 max_output_tokens=max_output_tokens,
-                temperature=temperature,
+                temperature=0.7 if temperature is None else temperature,
                 effort=effort,
                 timeout=timeout,
             )

@@ -51,7 +51,7 @@ def openai_chat(
     messages: List[Dict[str, str]],
     system_prompt: str = "",
     max_output_tokens: int = -1,
-    temperature: float = 0.7,
+    temperature: Optional[float] = None,
     effort: Optional[str] = None,
 ) -> str:
     """Send a multi-turn chat request through OpenAI."""
@@ -69,7 +69,7 @@ def openai_chat(
     effort = resolve_effort("openai", model, effort)
     if effort is not None:
         request_options["reasoning_effort"] = effort
-    else:
+    elif temperature is not None:
         request_options["temperature"] = temperature
 
     if max_output_tokens != -1:

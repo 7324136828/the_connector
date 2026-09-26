@@ -120,6 +120,14 @@ def test_openai_non_reasoning_model_keeps_temperature_and_standard_limit():
     assert "reasoning_effort" not in options
 
 
+def test_openai_omits_unspecified_temperature_for_unclassified_model():
+    client, create = completion_client()
+    openai_connector.openai_chat(client, model="gpt-future", messages=MESSAGES)
+    options = create.call_args.kwargs
+    assert "temperature" not in options
+    assert "reasoning_effort" not in options
+
+
 @pytest.mark.parametrize("model,selected,expected", [
     ("claude-opus-4-5", None, "low"),
     ("claude-sonnet-4-6", "high", "high"),

@@ -4,15 +4,11 @@ from __future__ import annotations
 
 import ast
 import json
-import operator as op
-import os
-import platform
 import re
 import subprocess
 import sys
 import time
 import urllib.request
-from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional
 
 from ..schemas.chat import (
@@ -23,18 +19,7 @@ from ..schemas.chat import (
     AgentToolDefinition,
 )
 from .router import router
-
-# Safe mathematical expression evaluator
-_SAFE_MATH_OPERATORS = {
-    ast.Add: op.add,
-    ast.Sub: op.sub,
-    ast.Mult: op.mul,
-    ast.Div: op.truediv,
-    ast.FloorDiv: op.floordiv,
-    ast.Mod: op.mod,
-    ast.Pow: op.pow,
-    ast.USub: op.neg,
-}
+from .skill_manager import SkillManager, skill_manager as persistent_skill_manager
 
 _INVALID_JSON_ESCAPE = re.compile(r'\\(?!["\\/bfnrt]|u[0-9a-fA-F]{4})')
 
@@ -91,41 +76,11 @@ def _video_block_answer(value: Any) -> Optional[str]:
     return "```video\n" + json.dumps(decoded, ensure_ascii=False) + "\n```"
 
 
-def _safe_eval_math(node: ast.AST) -> Any:
-    if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
-        return node.value
-    elif isinstance(node, ast.BinOp):
-        left = _safe_eval_math(node.left)
-        right = _safe_eval_math(node.right)
-        op_type = type(node.op)
-        if op_type in _SAFE_MATH_OPERATORS:
-            return _SAFE_MATH_OPERATORS[op_type](left, right)
-        raise ValueError(f"Unsupported operator: {op_type.__name__}")
-    elif isinstance(node, ast.UnaryOp):
-        operand = _safe_eval_math(node.operand)
-        op_type = type(node.op)
-        if op_type in _SAFE_MATH_OPERATORS:
-            return _SAFE_MATH_OPERATORS[op_type](operand)
-        raise ValueError(f"Unsupported unary operator: {op_type.__name__}")
-    raise ValueError(f"Unsupported AST node in math expression: {type(node).__name__}")
-
-
-def tool_calculator(expression: str) -> str:
-    """Safely calculate mathematical arithmetic expressions."""
-    try:
-        clean_expr = expression.replace("^", "**").strip()
-        tree = ast.parse(clean_expr, mode="eval")
-        res = _safe_eval_math(tree.body)
-        return str(res)
-    except Exception as exc:
-        return f"Error evaluating '{expression}': {exc}"
-
-
-def tool_python_interpreter(code: str) -> str:
+def tool_run_python_script(code: str) -> str:
     """Execute Python code in an isolated subprocess with a 5-second timeout."""
     try:
         res = subprocess.run(
-            [sys.executable, "-c", code],
+            [sys.executable, "-I", "-c", code],
             capture_output=True,
             text=True,
             timeout=5.0,
@@ -141,69 +96,19 @@ def tool_python_interpreter(code: str) -> str:
         return f"Error executing Python code: {exc}"
 
 
-def tool_system_info() -> str:
-    """Get sanitized host system info and UTC timestamp."""
-    return json.dumps({
-        "current_time_utc": datetime.now(timezone.utc).isoformat(),
-        "platform": platform.platform(),
-        "python_version": platform.python_version(),
-        "system": platform.system(),
-    }, indent=2)
-
-
-def tool_web_search(query: str) -> str:
-    """Simulated web search for documentation, facts, and live queries."""
-    q = query.lower()
-    if "connector" in q:
-        return (
-            "The Connector is a unified multi-provider AI gateway and chat platform "
-            "supporting OpenAI, Anthropic Claude, Google Gemini, Ollama, and OpenRouter "
-            "with intelligent fallback routing and context memory controls."
-        )
-    elif "python" in q:
-        return f"Python latest release is 3.14 / 3.13. Current runtime is Python {platform.python_version()}."
-    return f"Search results for '{query}': Found multiple relevant resources matching your query."
-
-
-def tool_http_fetch(url: str) -> str:
-    """Fetch text or JSON content from a public URL."""
-    try:
-        req = urllib.request.Request(
-            url,
-            headers={"User-Agent": "TheConnector-Agent/1.0"},
-            method="GET",
-        )
-        with urllib.request.urlopen(req, timeout=5.0) as resp:
-            content = resp.read().decode("utf-8", errors="replace")
-        return content[:2000] + ("..." if len(content) > 2000 else "")
-    except Exception as exc:
-        return f"HTTP Fetch failed for {url}: {exc}"
-
-
 class AgentService:
     """Orchestrates tool registration, execution, and ReAct agent loops."""
 
-    def __init__(self):
+    def __init__(self, skill_manager: SkillManager | None = None):
         self._tools: Dict[str, Dict[str, Any]] = {}
+        self.skill_manager = skill_manager or persistent_skill_manager
         self._register_default_tools()
+        self.reload_persisted_skills()
 
     def _register_default_tools(self) -> None:
         self.register_tool(
-            name="calculator",
-            description="Safely evaluate arithmetic mathematical expressions (e.g. '12 * 45 + 180 / 4').",
-            parameters={
-                "type": "object",
-                "properties": {
-                    "expression": {"type": "string", "description": "The math expression to calculate."}
-                },
-                "required": ["expression"],
-            },
-            handler=lambda args: tool_calculator(args.get("expression", "")),
-        )
-
-        self.register_tool(
-            name="python_interpreter",
-            description="Execute arbitrary Python code in a safe subprocess and return stdout/stderr.",
+            name="run_python_script",
+            description="Run a Python script in a separate process and return stdout/stderr.",
             parameters={
                 "type": "object",
                 "properties": {
@@ -211,41 +116,73 @@ class AgentService:
                 },
                 "required": ["code"],
             },
-            handler=lambda args: tool_python_interpreter(args.get("code", "")),
+            handler=lambda args: tool_run_python_script(args.get("code", "")),
+            kind="native",
         )
 
         self.register_tool(
-            name="system_info",
-            description="Retrieve system environment info such as UTC timestamp and platform details.",
-            parameters={"type": "object", "properties": {}},
-            handler=lambda args: tool_system_info(),
-        )
-
-        self.register_tool(
-            name="web_search",
-            description="Perform a web search for documentation, current events, or knowledge base lookups.",
+            name="create_skill_from_conversation",
+            description=(
+                "Create and persist a reusable Python skill from a pasted conversation. "
+                "Translate the conversation into python_code defining run(args), then call this tool."
+            ),
             parameters={
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string", "description": "Search query string."}
+                    "name": {"type": "string", "description": "Lowercase snake_case skill name."},
+                    "description": {"type": "string", "description": "What the skill does."},
+                    "parameters": {"type": "object", "description": "JSON Schema for run(args)."},
+                    "python_code": {
+                        "type": "string",
+                        "description": "Python source defining a top-level run(args) function.",
+                    },
+                    "source_conversation": {
+                        "type": "string",
+                        "description": "The original pasted conversation used to derive the skill.",
+                    },
                 },
-                "required": ["query"],
+                "required": ["name", "description", "parameters", "python_code", "source_conversation"],
             },
-            handler=lambda args: tool_web_search(args.get("query", "")),
+            handler=self._create_persisted_skill,
+            kind="native",
         )
 
+    def _register_persisted_skill(self, record: Dict[str, Any]) -> None:
+        name = record["name"]
         self.register_tool(
-            name="http_fetch",
-            description="Fetch text or JSON from an HTTP/HTTPS endpoint.",
-            parameters={
-                "type": "object",
-                "properties": {
-                    "url": {"type": "string", "description": "Target HTTP/HTTPS URL."}
-                },
-                "required": ["url"],
-            },
-            handler=lambda args: tool_http_fetch(args.get("url", "")),
+            name=name,
+            description=record["description"],
+            parameters=record["parameters"],
+            handler=lambda args, skill_name=name: self.skill_manager.execute_skill(skill_name, args),
+            kind="persisted",
         )
+
+    def reload_persisted_skills(self) -> None:
+        """Reload database-backed skills into the callable registry."""
+        native_names = {"run_python_script", "create_skill_from_conversation"}
+        for name in list(self._tools):
+            if name not in native_names and self._tools[name].get("persisted"):
+                del self._tools[name]
+        for record in self.skill_manager.list_skills():
+            self._register_persisted_skill(record)
+            self._tools[record["name"]]["persisted"] = True
+
+    def _create_persisted_skill(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        record = self.skill_manager.create_skill(
+            name=args.get("name", ""),
+            description=args.get("description", ""),
+            parameters=args.get("parameters", {}),
+            python_code=args.get("python_code", ""),
+            source_conversation=args.get("source_conversation", ""),
+        )
+        self._register_persisted_skill(record)
+        self._tools[record["name"]]["persisted"] = True
+        return record
+
+    def remove_persisted_skill(self, name: str) -> None:
+        entry = self._tools.get(name)
+        if entry and entry.get("persisted"):
+            del self._tools[name]
 
     def register_tool(
         self,
@@ -254,6 +191,7 @@ class AgentService:
         parameters: Dict[str, Any],
         handler: Optional[Callable[[Dict[str, Any]], Any]] = None,
         endpoint: Optional[str] = None,
+        kind: str = "plugin",
     ) -> None:
         """Register a new tool or plugin capability."""
         self._tools[name] = {
@@ -261,10 +199,53 @@ class AgentService:
                 name=name,
                 description=description,
                 parameters=parameters,
+                kind=kind,
             ),
             "handler": handler,
             "endpoint": endpoint,
+            "kind": kind,
         }
+
+    def create_skill_from_conversation(
+        self, conversation: str, config: Dict[str, Any], requested_name: str | None = None,
+    ) -> Dict[str, Any]:
+        """Use the configured model to translate a pasted conversation into a stored skill."""
+        name_instruction = (
+            f"Use exactly {json.dumps(requested_name)} as the name."
+            if requested_name else "Choose a concise lowercase snake_case name."
+        )
+        system_prompt = (
+            "Convert the supplied conversation into one reusable Python skill. "
+            "Return exactly one JSON object and no markdown with keys: name, description, "
+            "parameters, and python_code. parameters must be a JSON Schema object whose type is object. "
+            "python_code must define a top-level synchronous function run(args) and return a JSON-serializable "
+            "result. Do not add network access, subprocesses, dynamic code execution, or filesystem writes unless "
+            "the pasted conversation explicitly requires them. " + name_instruction
+        )
+        route_res = router.route_chat(
+            messages=[{"role": "user", "content": conversation}],
+            system_prompt=system_prompt,
+            config=config,
+        )
+        generated = _agent_envelope(route_res.content)
+        if generated is None:
+            raise ValueError("The model did not return a valid JSON skill definition.")
+        if requested_name:
+            generated["name"] = requested_name
+        required = ("name", "description", "parameters", "python_code")
+        missing = [key for key in required if key not in generated]
+        if missing:
+            raise ValueError("The generated skill is missing: " + ", ".join(missing) + ".")
+        record = self.skill_manager.create_skill(
+            name=generated["name"],
+            description=generated["description"],
+            parameters=generated["parameters"],
+            python_code=generated["python_code"],
+            source_conversation=conversation,
+        )
+        self._register_persisted_skill(record)
+        self._tools[record["name"]]["persisted"] = True
+        return record
 
     def list_tools(self) -> List[AgentToolDefinition]:
         """List all available registered tools."""
@@ -400,11 +381,6 @@ class AgentService:
                 thought = raw_output[:120]
                 if "final" in raw_output.lower() or "answer" in raw_output.lower():
                     extracted_final = raw_output
-                elif any(t.name in raw_output for t in active_tools):
-                    # Check if calculator or python can be inferred
-                    if "calculator" in raw_output or any(c in req.prompt for c in ["+", "*", "/", "-"]):
-                        action_tool = "calculator"
-                        action_args = {"expression": req.prompt}
 
             if extracted_final is not None:
                 regular_steps += 1

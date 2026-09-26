@@ -257,7 +257,10 @@ export function App() {
           setError('');
         }}
       />
-      <AgentToolsModal isOpen={toolsModalOpen} onClose={() => setToolsModalOpen(false)} />
+      <AgentToolsModal
+        isOpen={toolsModalOpen} onClose={() => setToolsModalOpen(false)}
+        activeSessionId={activeSessionId}
+      />
     </div>
   );
 }

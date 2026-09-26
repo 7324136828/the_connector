@@ -36,6 +36,7 @@ from .schemas.chat import (
     UpdateSessionRequest,
 )
 from .schemas.configuration import normalize_config, example_config
+from .schemas.skill import SkillCreate, SkillDeleteResponse, SkillFromConversationRequest, SkillRecord, SkillUpdate
 from .model_capabilities import effort_levels, default_effort
 from .services import (
     agent_service,
@@ -43,7 +44,9 @@ from .services import (
     session_manager,
     speech_service,
     temp_manager,
+    skill_manager,
 )
+from .services.skill_manager import DuplicateSkillNameError, SkillNotFoundError, SkillValidationError
 from .services.connectors import list_ollama_models
 from .services.configuration_manager import configuration_manager
 from .services.configuration_history import configuration_history_manager
@@ -366,6 +369,72 @@ def register_tool(req: AgentRegisterToolRequest) -> Dict[str, Any]:
         endpoint=req.endpoint,
     )
     return {"status": "registered", "tool": req.name}
+
+
+@app.get("/api/skills", response_model=List[SkillRecord])
+def list_skills() -> List[SkillRecord]:
+    """List reusable Python skills persisted in SQLite."""
+    return skill_manager.list_skills()
+
+
+@app.post("/api/skills", response_model=SkillRecord, status_code=status.HTTP_201_CREATED)
+def create_skill(req: SkillCreate) -> SkillRecord:
+    """Persist validated conversation-derived Python code as a callable skill."""
+    try:
+        record = skill_manager.create_skill(**req.model_dump())
+    except DuplicateSkillNameError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except SkillValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    agent_service.reload_persisted_skills()
+    return record
+
+
+@app.post("/api/skills/from-conversation", response_model=SkillRecord, status_code=status.HTTP_201_CREATED)
+def create_skill_from_conversation(req: SkillFromConversationRequest) -> SkillRecord:
+    """Generate Python from a pasted conversation and persist the resulting skill."""
+    try:
+        _, _, _, _, config = session_manager.get_context_window(req.session_id)
+    except ValueError as exc:
+        raise session_error(exc) from exc
+    try:
+        return agent_service.create_skill_from_conversation(
+            req.conversation, config, requested_name=req.name,
+        )
+    except DuplicateSkillNameError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except (SkillValidationError, ValueError, TypeError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Skill generation failed: {exc}") from exc
+
+
+@app.delete("/api/skills/{skill_id}", response_model=SkillDeleteResponse)
+def delete_skill(skill_id: str) -> SkillDeleteResponse:
+    """Delete a persisted skill and remove it from the active tool registry."""
+    try:
+        record = skill_manager.delete_skill(skill_id)
+    except SkillNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    agent_service.remove_persisted_skill(record["name"])
+    return SkillDeleteResponse(id=record["id"], name=record["name"])
+
+
+@app.patch("/api/skills/{skill_id}", response_model=SkillRecord)
+def update_skill(skill_id: str, req: SkillUpdate) -> SkillRecord:
+    """Edit a persisted skill and immediately refresh the callable registry."""
+    try:
+        record = skill_manager.update_skill(
+            skill_id, **req.model_dump(exclude_unset=True),
+        )
+    except SkillNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except DuplicateSkillNameError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except SkillValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    agent_service.reload_persisted_skills()
+    return record
 
 
 @app.post("/api/agent/run", response_model=AgentRunResponse)

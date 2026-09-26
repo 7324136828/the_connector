@@ -99,6 +99,19 @@ export async function requestSpeech(content, { signal } = {}) {
 }
 
 export function getAgentTools() { return request('/agent/tools'); }
+export function getSkills() { return request('/skills'); }
+export function createSkillFromConversation({ sessionId, conversation, name }) {
+  return request('/skills/from-conversation', {
+    method: 'POST',
+    body: { session_id: sessionId, conversation, ...(name?.trim() ? { name: name.trim() } : {}) },
+  });
+}
+export function deleteSkill(id) {
+  return request('/skills/' + encodeURIComponent(id), { method: 'DELETE' });
+}
+export function updateSkill(id, changes) {
+  return request('/skills/' + encodeURIComponent(id), { method: 'PATCH', body: changes });
+}
 export function getHealth() { return request('/health'); }
 export function getExportZipUrl(sessionId) {
   return BASE_URL + '/sessions/' + encodeURIComponent(sessionId) + '/export-zip';

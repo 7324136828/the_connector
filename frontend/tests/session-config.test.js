@@ -1,7 +1,7 @@
 import { afterEach, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { getConfigRoutes, setAgentFinalRetries, setMemorySource, setRouteEffort, suggestedModelId } from '../src/components/configHelpers.js';
-import { createNewSession, sendMessage, runAgent, updateSessionConfig, validateConfig, createLibraryConfig, updateLibraryConfig, deleteLibraryConfig, getLibraryConfigDownloadUrl, getModels, getConfigHistory, getConfigHistoryDownloadUrl, loadConfigFile, recordConfigLoad } from '../src/services/api.js';
+import { createNewSession, sendMessage, runAgent, updateSessionConfig, validateConfig, createLibraryConfig, updateLibraryConfig, deleteLibraryConfig, getLibraryConfigDownloadUrl, getModels, getConfigHistory, getConfigHistoryDownloadUrl, loadConfigFile, recordConfigLoad, getPythonEnvironments, createPythonEnvironment, selectPythonEnvironment, getExportZipUrl, getAllHistoryExportUrl, clearAllHistory } from '../src/services/api.js';
 import { visibleSessions } from '../src/components/sessionHelpers.js';
 
 const originalFetch = globalThis.fetch;
@@ -73,6 +73,36 @@ test('saved configuration selection sends only config_id and provider catalog st
   await getModels();
   assert.deepEqual(requests[0].body, { title: 'New Chat', config_id: 'saved-config', user_session: true });
   assert.equal(requests[1].url, '/api/providers/models');
+});
+
+test('Python environment APIs list, create, and select managed environments', async () => {
+  const requests = [];
+  globalThis.fetch = async (url, options = {}) => {
+    requests.push({ url, ...options, body: options.body ? JSON.parse(options.body) : undefined });
+    return { ok: true, json: async () => [] };
+  };
+  await getPythonEnvironments();
+  await createPythonEnvironment({ name: 'Data Science' });
+  await selectPythonEnvironment('environment/id');
+  assert.equal(requests[0].url, '/api/python-environments');
+  assert.deepEqual(requests[1].body, { name: 'Data Science', select: true });
+  assert.equal(requests[1].method, 'POST');
+  assert.equal(requests[2].url, '/api/python-environments/environment%2Fid/select');
+  assert.equal(requests[2].method, 'POST');
+});
+
+test('history export URLs are encoded and clearing sends explicit confirmation', async () => {
+  const requests = [];
+  globalThis.fetch = async (url, options = {}) => {
+    requests.push({ url, ...options, body: options.body ? JSON.parse(options.body) : undefined });
+    return { ok: true, json: async () => ({ deleted_sessions: 2, status: 'cleared' }) };
+  };
+  assert.equal(getExportZipUrl('session/id'), '/api/sessions/session%2Fid/export-zip');
+  assert.equal(getAllHistoryExportUrl(), '/api/history/export-zip');
+  assert.deepEqual(await clearAllHistory(), { deleted_sessions: 2, status: 'cleared' });
+  assert.equal(requests[0].url, '/api/history');
+  assert.equal(requests[0].method, 'DELETE');
+  assert.deepEqual(requests[0].body, { confirmation: 'DELETE' });
 });
 
 test('library create and activation use registry APIs and deletion accepts empty responses', async () => {

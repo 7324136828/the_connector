@@ -235,21 +235,23 @@ const markdownComponents = {
 
 export function MessageItem({ message }) {
   const isUser = message.role === 'user';
+  const agentSteps = message.agentSteps || message.agent_steps || [];
+  const isAgent = Boolean(message.isAgent || agentSteps.length);
   const [showSteps, setShowSteps] = useState(false);
   const wrappedVideos = isUser ? null : parseVideoMessage(message.content);
   const hasSpeechContent = !isUser && typeof message.content === 'string' && Boolean(message.content.trim());
 
   return (
     <div className="message-row">
-      <div className={`avatar ${isUser ? 'avatar-user' : message.isAgent ? 'avatar-agent' : 'avatar-assistant'}`}>
-        {isUser ? 'U' : message.isAgent ? 'AG' : 'AI'}
+      <div className={`avatar ${isUser ? 'avatar-user' : isAgent ? 'avatar-agent' : 'avatar-assistant'}`}>
+        {isUser ? 'U' : isAgent ? 'AG' : 'AI'}
       </div>
 
       <div className="message-body">
         {/* Metadata Banner */}
         <div className="message-meta-row">
           <span style={{ fontWeight: 600, color: 'var(--text-main)' }}>
-            {isUser ? 'You' : message.isAgent ? 'Agent Orchestrator' : 'Assistant'}
+            {isUser ? 'You' : isAgent ? 'Agent Orchestrator' : 'Assistant'}
           </span>
 
           {!isUser && message.provider && (
@@ -274,20 +276,20 @@ export function MessageItem({ message }) {
         </div>
 
         {/* Agent Step Traces if present */}
-        {message.agentSteps && message.agentSteps.length > 0 && (
+        {agentSteps.length > 0 && (
           <div className="agent-steps-wrapper">
             <button
               type="button" className="agent-steps-header"
               aria-expanded={showSteps}
               onClick={() => setShowSteps((visible) => !visible)}
             >
-              <span>⚡ Reasoning & Tool Trace ({message.agentSteps.length} step{message.agentSteps.length > 1 ? 's' : ''})</span>
+              <span>⚡ Reasoning & Tool Trace ({agentSteps.length} step{agentSteps.length > 1 ? 's' : ''})</span>
               <span>{showSteps ? '▲ Hide' : '▼ Expand'}</span>
             </button>
 
             {showSteps && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '6px' }}>
-                {message.agentSteps.map((s, idx) => (
+                {agentSteps.map((s, idx) => (
                   <div key={idx} className="step-card">
                     <div className="step-header">
                       <span>Step {s.step || idx + 1}:</span>

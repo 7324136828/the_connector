@@ -357,6 +357,55 @@ def test_completed_exchange_saves_both_turns_and_returns_assistant_metadata(mana
     assert detail.session.updated_at == assistant.created_at
 
 
+def test_agent_steps_survive_database_restart(manager):
+    current = create(manager)
+    steps = [{
+        "step": 1,
+        "thought": "Evaluate the expression.",
+        "tool": "eval_expression",
+        "arguments": {"expression": "1+3*4"},
+        "observation": "{'expression': '1+3*4', 'result': 13}",
+    }]
+
+    saved = manager.add_exchange(
+        current,
+        "What is 1+3*4?",
+        "13",
+        provider="mock",
+        model="mock-assistant",
+        agent_steps=steps,
+    )
+    restarted = SessionManager(manager.db_path).get_session(current)
+
+    assert saved.agent_steps[0].tool == "eval_expression"
+    assert restarted.messages[-1].agent_steps[0].arguments == {"expression": "1+3*4"}
+    assert restarted.messages[0].agent_steps is None
+
+
+def test_legacy_messages_table_gains_agent_steps_column(tmp_path):
+    db_path = tmp_path / "legacy-messages.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("""
+            CREATE TABLE messages (
+                id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                content TEXT NOT NULL,
+                provider TEXT,
+                model TEXT,
+                tokens_json TEXT,
+                latency_ms REAL,
+                created_at TEXT NOT NULL
+            )
+        """)
+
+    migrated = SessionManager(db_path)
+    with migrated._get_conn() as conn:
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(messages)")}
+
+    assert "agent_steps_json" in columns
+
+
 def test_closed_session_rejects_entire_exchange_without_writes(manager):
     current = create(manager)
     manager.add_exchange(current, "Earlier question", "Earlier answer")

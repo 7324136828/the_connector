@@ -99,11 +99,34 @@ export async function requestSpeech(content, { signal } = {}) {
 }
 
 export function getAgentTools() { return request('/agent/tools'); }
+export function getPythonEnvironments() { return request('/python-environments'); }
+export function createPythonEnvironment({ name, select = true }) {
+  return request('/python-environments', { method: 'POST', body: { name, select } });
+}
+export function selectPythonEnvironment(id) {
+  return request('/python-environments/' + encodeURIComponent(id) + '/select', { method: 'POST' });
+}
 export function getSkills() { return request('/skills'); }
-export function createSkillFromConversation({ sessionId, conversation, name }) {
+export function createCodingSkillFromConversation({ sessionId, conversation, name, type }) {
   return request('/skills/from-conversation', {
     method: 'POST',
-    body: { session_id: sessionId, conversation, ...(name?.trim() ? { name: name.trim() } : {}) },
+    body: {
+      session_id: sessionId,
+      conversation,
+      ...(name?.trim() ? { name: name.trim() } : {}),
+      ...(type ? { type } : {}),
+    },
+  });
+}
+export function getSkillsExportUrl() { return BASE_URL + '/skills/export'; }
+export async function importSkillsFile(file, conflict = 'error') {
+  const text = (await file.text()).replace(/^\uFEFF/, '');
+  let exported;
+  try { exported = JSON.parse(text); }
+  catch (err) { throw new Error(file.name + ' contains invalid JSON: ' + err.message); }
+  return request('/skills/import', {
+    method: 'POST',
+    body: { ...exported, conflict },
   });
 }
 export function deleteSkill(id) {
@@ -115,4 +138,8 @@ export function updateSkill(id, changes) {
 export function getHealth() { return request('/health'); }
 export function getExportZipUrl(sessionId) {
   return BASE_URL + '/sessions/' + encodeURIComponent(sessionId) + '/export-zip';
+}
+export function getAllHistoryExportUrl() { return BASE_URL + '/history/export-zip'; }
+export function clearAllHistory() {
+  return request('/history', { method: 'DELETE', body: { confirmation: 'DELETE' } });
 }

@@ -1,7 +1,6 @@
 ﻿import React from 'react';
-import { getExportZipUrl } from '../services/api';
 
-export function ModelSelector({ config, onOpenConfig, activeSessionId, pastMemory, agentMode, disabled, sidebarOpen, onToggleSidebar }) {
+export function ModelSelector({ config, onOpenConfig, pastMemory, agentMode, disabled, sidebarOpen, onToggleSidebar, onOpenPythonEnvironments, pythonEnvironmentName, onOpenExport }) {
   const steps = config?.sequences || [];
   const summary = steps.length === 1 && steps[0].model
     ? [steps[0].provider + ' / ' + steps[0].model, steps[0].effort].filter(Boolean).join(' · ')
@@ -30,11 +29,20 @@ export function ModelSelector({ config, onOpenConfig, activeSessionId, pastMemor
         {agentMode && <span className="badge-tag badge-ollama">Agent Mode</span>}
       </div>
       <div className="header-right">
-        {activeSessionId && (
-          <a href={getExportZipUrl(activeSessionId)} download className="model-dropdown-trigger export-link" title="Export this session as a ZIP archive">
-            Export ZIP
-          </a>
-        )}
+        <button
+          type="button" className="model-dropdown-trigger venv-trigger"
+          onClick={onOpenPythonEnvironments} disabled={disabled}
+          title={'Select the virtual environment for agent Python execution' + (pythonEnvironmentName ? ': ' + pythonEnvironmentName : '')}
+        >
+          <span>Select venv</span>
+          {pythonEnvironmentName && <span className="venv-trigger-name">{pythonEnvironmentName}</span>}
+        </button>
+        <button
+          type="button" className="model-dropdown-trigger export-link"
+          onClick={onOpenExport} disabled={disabled} title="Export or clear chat history"
+        >
+          Export
+        </button>
       </div>
     </header>
   );

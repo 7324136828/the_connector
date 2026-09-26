@@ -2,9 +2,18 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 from pydantic import BaseModel, Field, ConfigDict, field_validator, model_validator
 from .configuration import normalize_config
+
+
+class AgentStep(BaseModel):
+    """Single reasoning or tool execution step in an agent run."""
+    step: int
+    thought: str
+    tool: Optional[str] = None
+    arguments: Optional[Dict[str, Any]] = None
+    observation: Optional[str] = None
 
 
 class ChatMessage(BaseModel):
@@ -16,6 +25,7 @@ class ChatMessage(BaseModel):
     model: Optional[str] = None
     tokens: Optional[Dict[str, Optional[int]]] = None
     latency_ms: Optional[float] = None
+    agent_steps: Optional[List[AgentStep]] = None
     created_at: Optional[str] = None
 
 
@@ -110,6 +120,18 @@ class CloseSessionResponse(BaseModel):
     detail: str
 
 
+class ClearHistoryRequest(BaseModel):
+    """Explicit confirmation required before permanently deleting chat history."""
+    model_config = ConfigDict(extra="forbid")
+    confirmation: Literal["DELETE"]
+
+
+class ClearHistoryResponse(BaseModel):
+    """Result of permanently clearing every saved chat session."""
+    deleted_sessions: int
+    status: str = "cleared"
+
+
 class SessionSummary(BaseModel):
     """Summary of a chat session."""
     session_id: str
@@ -148,15 +170,6 @@ class AgentRegisterToolRequest(BaseModel):
     description: str
     parameters: Dict[str, Any]
     endpoint: Optional[str] = None
-
-
-class AgentStep(BaseModel):
-    """Single reasoning or tool execution step in an agent run."""
-    step: int
-    thought: str
-    tool: Optional[str] = None
-    arguments: Optional[Dict[str, Any]] = None
-    observation: Optional[str] = None
 
 
 class AgentRunRequest(BaseModel):

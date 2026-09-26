@@ -10,6 +10,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
+from starlette.background import BackgroundTask
 
 from .config import settings
 from .response_logging import LoggedFastAPI, ResponseLogWriter
@@ -24,6 +25,8 @@ from .schemas.chat import (
     AgentToolDefinition,
     ChatRequest,
     ChatResponse,
+    ClearHistoryRequest,
+    ClearHistoryResponse,
     CloseSessionRequest,
     CloseSessionResponse,
     ModelInfo,
@@ -36,7 +39,16 @@ from .schemas.chat import (
     UpdateSessionRequest,
 )
 from .schemas.configuration import normalize_config, example_config
-from .schemas.skill import SkillCreate, SkillDeleteResponse, SkillFromConversationRequest, SkillRecord, SkillUpdate
+from .schemas.skill import (
+    SkillCreate,
+    SkillDeleteResponse,
+    SkillFromConversationRequest,
+    SkillImportRequest,
+    SkillImportResponse,
+    SkillRecord,
+    SkillUpdate,
+)
+from .schemas.python_environment import PythonEnvironmentCreate, PythonEnvironmentRecord
 from .model_capabilities import effort_levels, default_effort
 from .services import (
     agent_service,
@@ -45,8 +57,15 @@ from .services import (
     speech_service,
     temp_manager,
     skill_manager,
+    python_environment_manager,
 )
 from .services.skill_manager import DuplicateSkillNameError, SkillNotFoundError, SkillValidationError
+from .services.python_environment_manager import (
+    DuplicatePythonEnvironmentError,
+    PythonEnvironmentError,
+    PythonEnvironmentNotFoundError,
+    PythonEnvironmentProvisionError,
+)
 from .services.connectors import list_ollama_models
 from .services.configuration_manager import configuration_manager
 from .services.configuration_history import configuration_history_manager
@@ -371,15 +390,52 @@ def register_tool(req: AgentRegisterToolRequest) -> Dict[str, Any]:
     return {"status": "registered", "tool": req.name}
 
 
+@app.get("/api/python-environments", response_model=List[PythonEnvironmentRecord])
+def list_python_environments() -> List[PythonEnvironmentRecord]:
+    """List managed virtual environments available for agentic Python execution."""
+    return python_environment_manager.list_environments()
+
+
+@app.post(
+    "/api/python-environments",
+    response_model=PythonEnvironmentRecord,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_python_environment(req: PythonEnvironmentCreate) -> PythonEnvironmentRecord:
+    """Create a managed virtual environment and optionally select it."""
+    try:
+        return python_environment_manager.create_environment(req.name, select=req.select)
+    except DuplicatePythonEnvironmentError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except PythonEnvironmentError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except PythonEnvironmentProvisionError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.post(
+    "/api/python-environments/{environment_id}/select",
+    response_model=PythonEnvironmentRecord,
+)
+def select_python_environment(environment_id: str) -> PythonEnvironmentRecord:
+    """Select the managed environment used by Python execution and package installation."""
+    try:
+        return python_environment_manager.select_environment(environment_id)
+    except PythonEnvironmentNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PythonEnvironmentProvisionError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
 @app.get("/api/skills", response_model=List[SkillRecord])
 def list_skills() -> List[SkillRecord]:
-    """List reusable Python skills persisted in SQLite."""
+    """List reusable typed coding skills persisted in SQLite."""
     return skill_manager.list_skills()
 
 
 @app.post("/api/skills", response_model=SkillRecord, status_code=status.HTTP_201_CREATED)
 def create_skill(req: SkillCreate) -> SkillRecord:
-    """Persist validated conversation-derived Python code as a callable skill."""
+    """Persist validated conversation-derived code as a callable skill."""
     try:
         record = skill_manager.create_skill(**req.model_dump())
     except DuplicateSkillNameError as exc:
@@ -391,15 +447,18 @@ def create_skill(req: SkillCreate) -> SkillRecord:
 
 
 @app.post("/api/skills/from-conversation", response_model=SkillRecord, status_code=status.HTTP_201_CREATED)
-def create_skill_from_conversation(req: SkillFromConversationRequest) -> SkillRecord:
-    """Generate Python from a pasted conversation and persist the resulting skill."""
+def create_coding_skill_from_conversation(req: SkillFromConversationRequest) -> SkillRecord:
+    """Generate typed code from a conversation and persist the resulting skill."""
     try:
         _, _, _, _, config = session_manager.get_context_window(req.session_id)
     except ValueError as exc:
         raise session_error(exc) from exc
     try:
-        return agent_service.create_skill_from_conversation(
-            req.conversation, config, requested_name=req.name,
+        return agent_service.create_coding_skill_from_conversation(
+            req.conversation,
+            config,
+            requested_name=req.name,
+            requested_type=req.type,
         )
     except DuplicateSkillNameError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -407,6 +466,30 @@ def create_skill_from_conversation(req: SkillFromConversationRequest) -> SkillRe
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Skill generation failed: {exc}") from exc
+
+
+@app.get("/api/skills/export")
+def export_skills() -> JSONResponse:
+    """Download all coding skills as a portable skills.json document."""
+    return JSONResponse(
+        skill_manager.export_skills(),
+        headers={"Content-Disposition": 'attachment; filename="skills.json"'},
+    )
+
+
+@app.post("/api/skills/import", response_model=SkillImportResponse)
+def import_skills(req: SkillImportRequest) -> SkillImportResponse:
+    """Validate and atomically import coding skills from an exported document."""
+    try:
+        result = skill_manager.import_skills(
+            [skill.model_dump() for skill in req.skills], conflict=req.conflict,
+        )
+    except DuplicateSkillNameError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except SkillValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    agent_service.reload_persisted_skills()
+    return SkillImportResponse(**result)
 
 
 @app.delete("/api/skills/{skill_id}", response_model=SkillDeleteResponse)
@@ -480,6 +563,7 @@ def run_agent(req: AgentRunRequest) -> AgentRunResponse:
             session_id=req.session_id, user_content=req.prompt,
             assistant_content=resp.final_answer, provider=resp.provider, model=resp.model,
             tokens={"total_tokens": resp.total_tokens}, latency_ms=resp.latency_ms,
+            agent_steps=[step.model_dump() for step in resp.steps],
         )
     except ValueError as exc:
         raise session_error(exc) from exc
@@ -600,3 +684,31 @@ def export_session_zip(session_id: str):
         filename=f"session_{session_id[:8]}_export.zip",
         media_type="application/zip",
     )
+
+
+@app.get("/api/history/export-zip")
+def export_all_history_zip():
+    """Download every saved chat session in one ZIP archive."""
+    zip_path = temp_manager.package_all_sessions_export_zip(
+        session_manager.list_all_session_details()
+    )
+    if not zip_path.is_file():
+        raise HTTPException(status_code=500, detail="Could not create history export archive.")
+    return FileResponse(
+        path=zip_path,
+        filename="all_chat_history_export.zip",
+        media_type="application/zip",
+        background=BackgroundTask(
+            temp_manager.purge_temp, zip_path.parent.parent.name,
+        ),
+    )
+
+
+@app.delete("/api/history", response_model=ClearHistoryResponse)
+def clear_all_history(req: ClearHistoryRequest) -> ClearHistoryResponse:
+    """Permanently remove all saved chat sessions after explicit confirmation."""
+    session_ids = session_manager.clear_all_history()
+    for session_id in session_ids:
+        temp_manager.purge_temp(session_id)
+    temp_manager.purge_all_history_exports()
+    return ClearHistoryResponse(deleted_sessions=len(session_ids))

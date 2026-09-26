@@ -36,6 +36,18 @@
 .config-agent-settings label { display: flex; align-items: center; justify-content: space-between; gap: 14px; color: var(--text-main); font-size: .82rem; }
 .config-agent-settings input { width: 88px; border: 1px solid var(--border-subtle); border-radius: 5px; padding: 7px; background: var(--bg-input); color: var(--text-main); font: inherit; }
 .export-link { text-decoration: none; font-size: .78rem; white-space: nowrap; }
+.export-dialog { max-width: 620px; }
+.export-options { display: flex; flex-direction: column; gap: 12px; }
+.export-option { display: flex; align-items: center; justify-content: space-between; gap: 18px; border: 1px solid var(--border-subtle); border-radius: 9px; padding: 15px; }
+.export-option > div { min-width: 0; }
+.export-option h3 { font-size: .92rem; margin-bottom: 5px; }
+.export-option p { color: var(--text-muted); font-size: .78rem; line-height: 1.45; }
+.export-option .config-button { flex: 0 0 auto; }
+.export-danger-zone { display: grid; grid-template-columns: 1fr auto; border-color: rgba(239,68,68,.45); background: rgba(127,29,29,.12); }
+.export-danger-zone h3 { color: #fca5a5; }
+.export-confirm-label { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 6px; color: var(--text-muted); font-size: .78rem; }
+.export-confirm-label input { width: 100%; background: var(--bg-input); color: var(--text-main); border: 1px solid var(--border-subtle); border-radius: 6px; padding: 8px 10px; font: inherit; }
+.export-danger-zone > .config-button { grid-column: 2; }
 .response-status { font-size: .85rem; color: var(--text-muted); }
 .session-open { display: flex; flex: 1; min-width: 0; text-align: left; background: transparent; border: none; color: inherit; font: inherit; cursor: pointer; }
 .session-item:focus-within .session-actions { opacity: 1; }
@@ -63,11 +75,35 @@
 .library-model-id { color: var(--text-muted); font-size: .78rem; margin-bottom: 8px; }
 .library-model-id code { font-family: var(--font-mono); }
 .config-button.danger { color: #fca5a5; }
+.venv-trigger { white-space: nowrap; }
+.venv-trigger-name { max-width: 120px; overflow: hidden; text-overflow: ellipsis; color: var(--text-muted); font-size: .75rem; }
+.venv-dialog { max-width: 760px; }
+.venv-subtitle { color: var(--text-muted); font-size: .78rem; margin-top: 3px; }
+.venv-error { color: #fca5a5; background: rgba(127, 29, 29, .22); border: 1px solid rgba(248, 113, 113, .35); border-radius: 7px; padding: 9px 11px; margin-bottom: 14px; font-size: .8rem; }
+.venv-create { background: #16161d; border: 1px solid var(--border-subtle); border-radius: 8px; padding: 14px; margin-bottom: 16px; }
+.venv-create label { display: block; font-size: .84rem; font-weight: 600; margin-bottom: 8px; }
+.venv-create-row { display: flex; gap: 8px; }
+.venv-create-row input { flex: 1; min-width: 0; background: var(--bg-input); color: var(--text-main); border: 1px solid var(--border-subtle); border-radius: 7px; padding: 9px 10px; }
+.venv-create p { color: var(--text-faint); font-size: .74rem; margin-top: 8px; }
+.venv-list { display: flex; flex-direction: column; gap: 9px; }
+.venv-card { display: flex; align-items: center; justify-content: space-between; gap: 14px; border: 1px solid var(--border-subtle); border-radius: 8px; padding: 12px; background: #16161d; }
+.venv-card.selected { border-color: rgba(52, 211, 153, .6); box-shadow: inset 3px 0 #34d399; }
+.venv-card-main { min-width: 0; flex: 1; }
+.venv-name-row { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; margin-bottom: 6px; }
+.venv-card code { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-faint); font-size: .73rem; }
+.venv-status { color: #fbbf24; font-size: .68rem; text-transform: uppercase; letter-spacing: .04em; }
+.venv-status.ready { color: #34d399; }
+.venv-empty { color: var(--text-muted); text-align: center; padding: 18px; }
 .library-delete-confirm { border-top: 1px solid var(--border-subtle); padding-top: 12px; margin-top: 12px; font-size: .8rem; color: var(--text-muted); }
 .library-delete-confirm p { margin-bottom: 8px; }
 @media (max-width: 520px) {
   .library-fields { grid-template-columns: 1fr; }
   .library-toolbar { flex-direction: column; align-items: stretch; }
+  .venv-create-row, .venv-card { align-items: stretch; flex-direction: column; }
+  .venv-card .config-button { width: 100%; }
+  .export-option { align-items: stretch; flex-direction: column; }
+  .export-option .config-button { width: 100%; }
+  .export-danger-zone { display: flex; }
 }
 @media (max-width: 900px) {
   .config-summary { max-width: 190px; }
@@ -99,7 +135,7 @@
   .chat-header { padding-top: max(10px, env(safe-area-inset-top)); flex-wrap: wrap; }
   .header-left { flex: 1 1 100%; min-width: 0; }
   .header-left .model-dropdown-trigger { flex: 1; min-width: 0; }
-  .header-right { margin-left: 48px; }
+  .header-right { margin-left: 48px; flex-wrap: wrap; }
   .model-dropdown-trigger { min-height: 40px; }
   .messages-container { padding: 16px 12px; }
   .message-row { gap: 10px; }

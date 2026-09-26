@@ -5,10 +5,13 @@ import { ChatArea } from './components/ChatArea';
 import { ConfigModal } from './components/ConfigModal';
 import { ConfigLibrary } from './components/ConfigLibrary';
 import { AgentToolsModal } from './components/AgentToolsModal';
+import { PythonEnvironmentModal } from './components/PythonEnvironmentModal';
+import { ExportHistoryModal } from './components/ExportHistoryModal';
 import { visibleSessions } from './components/sessionHelpers';
 import {
   createNewSession, sendMessage, closeSession, getSessions, getSession,
   getModels, runAgent, updateSessionConfig, recordConfigLoad,
+  getPythonEnvironments, clearAllHistory,
 } from './services/api';
 
 export function App() {
@@ -28,6 +31,9 @@ export function App() {
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [libraryDraft, setLibraryDraft] = useState(null);
   const [toolsModalOpen, setToolsModalOpen] = useState(false);
+  const [pythonEnvironmentModalOpen, setPythonEnvironmentModalOpen] = useState(false);
+  const [exportModalOpen, setExportModalOpen] = useState(false);
+  const [pythonEnvironment, setPythonEnvironment] = useState(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [showSystemSessions, setShowSystemSessions] = useState(() => {
     try { return window.localStorage.getItem('connector.showSystemSessions') === 'true'; }
@@ -45,12 +51,17 @@ export function App() {
 
   useEffect(() => {
     let cancelled = false;
-    Promise.allSettled([getSessions(), getModels()]).then(([sessionResult, modelResult]) => {
+    Promise.allSettled([getSessions(), getModels(), getPythonEnvironments()]).then(([sessionResult, modelResult, environmentResult]) => {
       if (cancelled) return;
       if (sessionResult.status === 'fulfilled') setSessions(sessionResult.value);
       else setError(sessionResult.reason.message);
       if (modelResult.status === 'fulfilled') setModels(modelResult.value);
       else setError((current) => [current, 'Model catalog: ' + modelResult.reason.message].filter(Boolean).join(' '));
+      if (environmentResult.status === 'fulfilled') {
+        setPythonEnvironment(environmentResult.value.find((item) => item.selected) || null);
+      } else {
+        setError((current) => [current, 'Python environments: ' + environmentResult.reason.message].filter(Boolean).join(' '));
+      }
     });
     return () => { cancelled = true; };
   }, []);
@@ -109,6 +120,27 @@ export function App() {
       }
     } catch (err) {
       setError('Could not close session: ' + err.message);
+    } finally {
+      busyRef.current = false;
+      setLoading(false);
+    }
+  };
+
+  const handleClearAllHistory = async () => {
+    if (busyRef.current || busy) return;
+    busyRef.current = true;
+    setLoading(true);
+    setError('');
+    try {
+      const result = await clearAllHistory();
+      setSessions([]);
+      setActiveSessionId(null);
+      setMessages([]);
+      setDraftVersion((version) => version + 1);
+      return result;
+    } catch (err) {
+      setError('Could not clear chat history: ' + err.message);
+      throw err;
     } finally {
       busyRef.current = false;
       setLoading(false);
@@ -223,6 +255,9 @@ export function App() {
           pastMemory={pastMemory} agentMode={agentMode}
           onOpenConfig={() => setConfigModalOpen(true)} disabled={busy}
           sidebarOpen={sidebarOpen} onToggleSidebar={() => setSidebarOpen((open) => !open)}
+          onOpenPythonEnvironments={() => setPythonEnvironmentModalOpen(true)}
+          pythonEnvironmentName={pythonEnvironment?.name}
+          onOpenExport={() => setExportModalOpen(true)}
         />
         {error && (
           <div className="app-error" role="alert">
@@ -260,6 +295,15 @@ export function App() {
       <AgentToolsModal
         isOpen={toolsModalOpen} onClose={() => setToolsModalOpen(false)}
         activeSessionId={activeSessionId}
+      />
+      <PythonEnvironmentModal
+        isOpen={pythonEnvironmentModalOpen}
+        onClose={() => setPythonEnvironmentModalOpen(false)}
+        onSelectionChange={setPythonEnvironment}
+      />
+      <ExportHistoryModal
+        isOpen={exportModalOpen} onClose={() => setExportModalOpen(false)}
+        activeSessionId={activeSessionId} onClearAll={handleClearAllHistory}
       />
     </div>
   );

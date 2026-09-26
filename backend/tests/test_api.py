@@ -1,7 +1,10 @@
 """API regressions for config ownership, routing, effort, and saved memory."""
 from copy import deepcopy
 import importlib
+import io
 import json
+import sys
+import zipfile
 import pytest
 from fastapi.testclient import TestClient
 from backend.app import main
@@ -11,6 +14,7 @@ from backend.app.services.connectors.common import ChatAPIError
 client = TestClient(main.app)
 MOCK_CONFIG = {"sequences": [{"provider": "mock", "model": "mock-assistant", "retries": 0}]}
 router_module = importlib.import_module("backend.app.services.router")
+agent_service_module = importlib.import_module("backend.app.services.agent_service")
 
 
 def session(config=None, **fields):
@@ -161,6 +165,39 @@ def test_chat_and_legacy_alias():
         assert client.post("/api/chat", json={"session_id": sid, "message": "test", **override}).status_code == 422
 
 
+def test_export_and_clear_all_chat_history():
+    first = session()
+    second = session()
+    main.session_manager.add_exchange(first, "First question", "First answer")
+    main.session_manager.add_exchange(second, "Second question", "Second answer")
+    main.session_manager.close_session(second)
+
+    exported = client.get("/api/history/export-zip")
+    assert exported.status_code == 200, exported.text
+    assert "all_chat_history_export.zip" in exported.headers["content-disposition"]
+    with zipfile.ZipFile(io.BytesIO(exported.content)) as archive:
+        assert "manifest.json" in archive.namelist()
+        manifest = json.loads(archive.read("manifest.json"))
+        assert manifest["session_count"] == 2
+        transcripts = [name for name in archive.namelist() if name.endswith("/transcript.json")]
+        assert len(transcripts) == 2
+        contents = " ".join(archive.read(name).decode("utf-8") for name in transcripts)
+        assert "First question" in contents
+        assert "Second question" in contents
+
+    assert client.request(
+        "DELETE", "/api/history", json={"confirmation": "not confirmed"}
+    ).status_code == 422
+    cleared = client.request("DELETE", "/api/history", json={"confirmation": "DELETE"})
+    assert cleared.status_code == 200
+    assert cleared.json() == {"deleted_sessions": 2, "status": "cleared"}
+    assert client.get("/api/sessions").json() == []
+    assert client.get(f"/api/sessions/{first}").status_code == 404
+    with main.session_manager._get_conn() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0] == 0
+
+
+
 def test_chat_memory_reaches_provider_and_off_survives_reload(monkeypatch):
     calls = []
     def complete(**kwargs):
@@ -224,10 +261,56 @@ def test_agent_uses_session_config_and_memory(monkeypatch):
     assert calls[-1]["config"]["sequences"][0]["provider"] == "mock"
     assert any("Juniper" in m["content"] for m in calls[-1]["messages"])
     assert client.post("/api/agent/run", json={"prompt": "test", "provider": "mock"}).status_code == 422
+    monkeypatch.setattr(
+        agent_service_module,
+        "_agent_python_executable",
+        lambda _environment_manager=None: sys.executable,
+    )
     assert client.post(
         "/api/agent/step",
         json={"tool": "run_python_script", "arguments": {"code": "print(25 * 4 + 15)"}},
     ).json()["result"] == "115"
+
+
+def test_agent_tool_trace_is_returned_from_session_history(monkeypatch):
+    outputs = [
+        json.dumps({
+            "thought": "Evaluate the expression using the calculator.",
+            "action": {"tool": "eval_expression", "arguments": {"expression": "1+3*4"}},
+            "final_answer": None,
+        }),
+        json.dumps({
+            "thought": "I now have the solution.",
+            "action": None,
+            "final_answer": "13",
+        }),
+    ]
+    monkeypatch.setattr(
+        main.router,
+        "route_chat",
+        lambda **kwargs: RouteResult(
+            outputs.pop(0), "mock", "actual-model", {"total_tokens": 1}, 1, {},
+        ),
+    )
+    main.agent_service.register_tool(
+        name="eval_expression",
+        description="Evaluate an arithmetic expression.",
+        parameters={"type": "object"},
+        handler=lambda args: {"expression": args["expression"], "result": 13},
+    )
+    sid = session()
+
+    response = client.post(
+        "/api/agent/run",
+        json={"session_id": sid, "prompt": "What is 1+3*4?", "tools": ["eval_expression"]},
+    )
+    history = client.get(f"/api/sessions/{sid}").json()["messages"]
+
+    assert response.status_code == 200, response.text
+    assert history[-1]["agent_steps"] == response.json()["steps"]
+    assert history[-1]["agent_steps"][0]["tool"] == "eval_expression"
+    assert history[-1]["agent_steps"][0]["arguments"] == {"expression": "1+3*4"}
+    assert history[0]["agent_steps"] is None
 
 
 def test_agent_returns_only_final_answer_from_json_with_markdown_escapes(monkeypatch):

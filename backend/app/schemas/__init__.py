@@ -7,6 +7,8 @@ from .chat import (
     ChatResponse,
     CloseSessionRequest,
     CloseSessionResponse,
+    ClearHistoryRequest,
+    ClearHistoryResponse,
     SessionSummary,
     SessionDetail,
     TokenUsageInfo,
@@ -19,6 +21,7 @@ from .chat import (
     AgentStepResponse,
     ModelInfo,
 )
+from .python_environment import PythonEnvironmentCreate, PythonEnvironmentRecord
 
 __all__ = [
     "ChatMessage",
@@ -28,6 +31,8 @@ __all__ = [
     "ChatResponse",
     "CloseSessionRequest",
     "CloseSessionResponse",
+    "ClearHistoryRequest",
+    "ClearHistoryResponse",
     "SessionSummary",
     "SessionDetail",
     "TokenUsageInfo",
@@ -39,4 +44,6 @@ __all__ = [
     "AgentStepRequest",
     "AgentStepResponse",
     "ModelInfo",
+    "PythonEnvironmentCreate",
+    "PythonEnvironmentRecord",
 ]

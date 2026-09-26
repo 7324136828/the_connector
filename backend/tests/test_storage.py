@@ -14,9 +14,13 @@ from backend.app.storage import prepare_database
 def test_default_database_is_in_system_temp(monkeypatch):
     monkeypatch.delenv("DB_PATH", raising=False)
     monkeypatch.delenv("DATA_DIR", raising=False)
+    monkeypatch.delenv("AGENT_PYTHON_ENV_DIR", raising=False)
+    monkeypatch.delenv("AGENT_PYTHON_ENVS_DIR", raising=False)
     settings = Settings(_env_file=None)
     assert settings.db_path == Path(tempfile.gettempdir()) / "the_connector" / "connector.db"
     assert settings.data_dir == settings.db_path.parent
+    assert settings.agent_python_env_dir == Path(tempfile.gettempdir()) / "the_connector_python"
+    assert settings.agent_python_envs_dir == Path(tempfile.gettempdir()) / "the_connector_python_envs"
 
 
 def test_explicit_storage_overrides(monkeypatch, tmp_path):
@@ -25,6 +29,11 @@ def test_explicit_storage_overrides(monkeypatch, tmp_path):
     assert Settings(_env_file=None).db_path == tmp_path / "data" / "connector.db"
     monkeypatch.setenv("DB_PATH", str(tmp_path / "custom.db"))
     assert Settings(_env_file=None).db_path == tmp_path / "custom.db"
+    monkeypatch.setenv("AGENT_PYTHON_ENV_DIR", str(tmp_path / "agent-python"))
+    monkeypatch.setenv("AGENT_PYTHON_ENVS_DIR", str(tmp_path / "agent-pythons"))
+    overridden = Settings(_env_file=None)
+    assert overridden.agent_python_env_dir == tmp_path / "agent-python"
+    assert overridden.agent_python_envs_dir == tmp_path / "agent-pythons"
 
 
 def test_new_storage_does_not_create_database_or_project_directory(tmp_path):

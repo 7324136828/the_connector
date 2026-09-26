@@ -111,6 +111,21 @@ test('agent reasoning trace is retained but collapsed by default', () => {
   assert.match(html, /Final answer only\./);
 });
 
+test('persisted snake-case agent traces render after history reload', () => {
+  const html = render('13', {
+    agent_steps: [{
+      step: 1,
+      thought: 'Evaluate the expression.',
+      tool: 'eval_expression',
+      arguments: { expression: '1+3*4' },
+      observation: "{'result': 13}",
+    }],
+  });
+  assert.match(html, /avatar-agent/);
+  assert.match(html, /Agent Orchestrator/);
+  assert.match(html, /Reasoning &amp; Tool Trace \(1 step\)/);
+});
+
 test('speech is offered for every non-empty assistant response', () => {
   assert.equal(extractSpeechText('{"text":"  Read only this.  ","thought":"Do not read this."}'), 'Read only this.');
   assert.equal(extractSpeechText('  plain model response  '), 'plain model response');

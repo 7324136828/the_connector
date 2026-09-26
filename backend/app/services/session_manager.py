@@ -103,10 +103,14 @@ class SessionManager:
                     model TEXT,
                     tokens_json TEXT,
                     latency_ms REAL,
+                    agent_steps_json TEXT,
                     created_at TEXT NOT NULL,
                     FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
                 )
             """)
+            message_columns = {row["name"] for row in conn.execute("PRAGMA table_info(messages)")}
+            if "agent_steps_json" not in message_columns:
+                conn.execute("ALTER TABLE messages ADD COLUMN agent_steps_json TEXT")
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS messages_session_created "
                 "ON messages(session_id, created_at)"
@@ -296,6 +300,11 @@ class SessionManager:
             messages: List[ChatMessage] = []
             for r in m_rows:
                 tokens = json.loads(r["tokens_json"]) if r["tokens_json"] else None
+                agent_steps = (
+                    json.loads(r["agent_steps_json"])
+                    if r["agent_steps_json"]
+                    else None
+                )
                 messages.append(
                     ChatMessage(
                         id=r["id"],
@@ -305,6 +314,7 @@ class SessionManager:
                         model=r["model"],
                         tokens=tokens,
                         latency_ms=r["latency_ms"],
+                        agent_steps=agent_steps,
                         created_at=r["created_at"],
                     )
                 )
@@ -406,6 +416,30 @@ class SessionManager:
                 )
             return summaries
 
+    def list_all_session_details(self) -> List[SessionDetail]:
+        """Return every saved session, including closed and system sessions, for export."""
+        with self._get_conn() as conn:
+            session_ids = [
+                row["id"]
+                for row in conn.execute(
+                    "SELECT id FROM sessions ORDER BY created_at ASC, rowid ASC"
+                ).fetchall()
+            ]
+        details = [self.get_session(session_id) for session_id in session_ids]
+        return [detail for detail in details if detail is not None]
+
+    def clear_all_history(self) -> List[str]:
+        """Permanently delete chats and their derived memory in one transaction."""
+        with self._get_conn() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            session_ids = [row["id"] for row in conn.execute("SELECT id FROM sessions")]
+            conn.execute("DELETE FROM sessions")
+            conn.execute("DELETE FROM memory_summary")
+            conn.execute(
+                "DELETE FROM configuration_history_references WHERE reference_key LIKE 'session:%'"
+            )
+        return session_ids
+
     def close_session(self, session_id: str) -> bool:
         """Close/deactivate a session."""
         with self._get_conn() as conn:
@@ -425,12 +459,14 @@ class SessionManager:
         model: Optional[str] = None,
         tokens: Optional[Dict[str, Optional[int]]] = None,
         latency_ms: Optional[float] = None,
+        agent_steps: Optional[List[Dict[str, Any]]] = None,
     ) -> ChatMessage:
         """Record a message in the session transcript."""
         with self._get_conn() as conn:
             conn.execute("BEGIN IMMEDIATE")
             return self._append_message(
-                conn, session_id, role, content, provider, model, tokens, latency_ms
+                conn, session_id, role, content, provider, model, tokens, latency_ms,
+                agent_steps,
             )
 
     def add_exchange(
@@ -442,6 +478,7 @@ class SessionManager:
         model: Optional[str] = None,
         tokens: Optional[Dict[str, Optional[int]]] = None,
         latency_ms: Optional[float] = None,
+        agent_steps: Optional[List[Dict[str, Any]]] = None,
     ) -> ChatMessage:
         """Save a completed user/assistant exchange together, only while active."""
         with self._get_conn() as conn:
@@ -452,7 +489,7 @@ class SessionManager:
             self._append_message(conn, session_id, "user", user_content)
             return self._append_message(
                 conn, session_id, "assistant", assistant_content,
-                provider, model, tokens, latency_ms,
+                provider, model, tokens, latency_ms, agent_steps,
             )
 
     def _append_message(
@@ -465,11 +502,13 @@ class SessionManager:
         model: Optional[str] = None,
         tokens: Optional[Dict[str, Optional[int]]] = None,
         latency_ms: Optional[float] = None,
+        agent_steps: Optional[List[Dict[str, Any]]] = None,
     ) -> ChatMessage:
         """Insert within the caller's write transaction without committing it."""
         msg_id = str(uuid.uuid4())
         now = utc_now_iso()
         tokens_json = json.dumps(tokens) if tokens else None
+        agent_steps_json = json.dumps(agent_steps, ensure_ascii=False) if agent_steps else None
 
         s_row = conn.execute(
             "SELECT title, status FROM sessions WHERE id = ?", (session_id,)
@@ -482,11 +521,11 @@ class SessionManager:
             """
             INSERT INTO messages (
                 id, session_id, role, content, provider,
-                model, tokens_json, latency_ms, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                model, tokens_json, latency_ms, agent_steps_json, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (msg_id, session_id, role, content, provider,
-             model, tokens_json, latency_ms, now),
+             model, tokens_json, latency_ms, agent_steps_json, now),
         )
         # Update session's updated_at and first message title if needed.
         if (s_row["title"] == "New Chat" or not s_row["title"]) and role == "user":
@@ -509,6 +548,7 @@ class SessionManager:
             model=model,
             tokens=tokens,
             latency_ms=latency_ms,
+            agent_steps=agent_steps,
             created_at=now,
         )
 

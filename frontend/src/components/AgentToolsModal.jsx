@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import {
-  createSkillFromConversation, deleteSkill, getAgentTools, getSkills, updateSkill,
+  createCodingSkillFromConversation, deleteSkill, getAgentTools, getSkills,
+  getSkillsExportUrl, importSkillsFile, updateSkill,
 } from '../services/api';
 
 const fieldStyle = {
@@ -17,9 +18,13 @@ export function AgentToolsModal({ isOpen, onClose, activeSessionId }) {
   const [testResult, setTestResult] = useState(null);
   const [testRunning, setTestRunning] = useState(false);
   const [skillName, setSkillName] = useState('');
+  const [skillType, setSkillType] = useState('');
   const [conversation, setConversation] = useState('');
   const [skillError, setSkillError] = useState('');
+  const [skillNotice, setSkillNotice] = useState('');
   const [skillCreating, setSkillCreating] = useState(false);
+  const [skillImporting, setSkillImporting] = useState(false);
+  const [importConflict, setImportConflict] = useState('error');
   const [editDraft, setEditDraft] = useState(null);
   const [skillSaving, setSkillSaving] = useState(false);
 
@@ -49,11 +54,14 @@ export function AgentToolsModal({ isOpen, onClose, activeSessionId }) {
     try {
       setSkillCreating(true);
       setSkillError('');
-      await createSkillFromConversation({
+      setSkillNotice('');
+      await createCodingSkillFromConversation({
         sessionId: activeSessionId, conversation: conversation.trim(), name: skillName,
+        type: skillType || undefined,
       });
       setConversation('');
       setSkillName('');
+      setSkillType('');
       await loadTools();
     } catch (err) {
       setSkillError(err.message);
@@ -81,6 +89,7 @@ export function AgentToolsModal({ isOpen, onClose, activeSessionId }) {
       name: skill.name,
       description: skill.description,
       parameters: JSON.stringify(skill.parameters, null, 2),
+      type: skill.type,
       python_code: skill.python_code,
       source_conversation: skill.source_conversation,
     });
@@ -96,6 +105,7 @@ export function AgentToolsModal({ isOpen, onClose, activeSessionId }) {
         name: editDraft.name,
         description: editDraft.description,
         parameters,
+        type: editDraft.type,
         python_code: editDraft.python_code,
         source_conversation: editDraft.source_conversation,
       });
@@ -105,6 +115,25 @@ export function AgentToolsModal({ isOpen, onClose, activeSessionId }) {
       setSkillError(err instanceof SyntaxError ? 'Parameters must be valid JSON.' : err.message);
     } finally {
       setSkillSaving(false);
+    }
+  };
+
+  const handleImportSkills = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    try {
+      setSkillImporting(true);
+      setSkillError('');
+      setSkillNotice('');
+      const result = await importSkillsFile(file, importConflict);
+      setSkillNotice(`Imported ${result.created}; replaced ${result.replaced}; skipped ${result.skipped}.`);
+      setEditDraft(null);
+      await loadTools();
+    } catch (err) {
+      setSkillError(err.message);
+    } finally {
+      setSkillImporting(false);
     }
   };
 
@@ -137,18 +166,41 @@ export function AgentToolsModal({ isOpen, onClose, activeSessionId }) {
 
         <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
           <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>
-            The Connector has two native skills: run Python and turn a pasted conversation into a reusable Python skill. Created skills are stored in SQLite and reloaded after restart.
+            The Connector can create reusable Python, Windows CMD, and C++ coding skills. Python uses the selected managed environment; CMD can call that environment through PATH; C++ uses a discovered system compiler. Created skills are stored in SQLite and reloaded after restart.
           </p>
           {skillError && <div role="alert" style={{ color: '#f87171', fontSize: '0.78rem' }}>{skillError}</div>}
+          {skillNotice && <div role="status" style={{ color: '#34d399', fontSize: '0.78rem' }}>{skillNotice}</div>}
+
+          <section style={{ backgroundColor: '#16161d', border: '1px solid var(--border-subtle)', borderRadius: '6px', padding: '12px' }}>
+            <div style={{ fontSize: '0.85rem', fontWeight: 600, marginBottom: '8px' }}>Backup and restore skills</div>
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+              <a href={getSkillsExportUrl()} download="skills.json" style={{ color: '#60a5fa', border: '1px solid var(--border-subtle)', borderRadius: '6px', padding: '6px 10px', textDecoration: 'none', fontSize: '0.78rem' }}>Export skills.json</a>
+              <select value={importConflict} onChange={(event) => setImportConflict(event.target.value)} style={{ background: '#121217', border: '1px solid var(--border-subtle)', color: 'var(--text-main)', borderRadius: '6px', padding: '6px 10px' }}>
+                <option value="error">Stop on duplicate</option>
+                <option value="skip">Skip duplicates</option>
+                <option value="replace">Replace duplicates</option>
+              </select>
+              <label style={{ color: '#60a5fa', border: '1px solid var(--border-subtle)', borderRadius: '6px', padding: '6px 10px', cursor: skillImporting ? 'default' : 'pointer', fontSize: '0.78rem' }}>
+                {skillImporting ? 'Importing...' : 'Import skills.json'}
+                <input type="file" accept="application/json,.json" disabled={skillImporting} onChange={handleImportSkills} style={{ display: 'none' }} />
+              </label>
+            </div>
+          </section>
 
           <section style={{ backgroundColor: '#16161d', border: '1px solid var(--border-subtle)', borderRadius: '6px', padding: '12px' }}>
             <div style={{ fontSize: '0.85rem', fontWeight: 600, marginBottom: '8px' }}>Create skill from conversation</div>
             <input value={skillName} onChange={(event) => setSkillName(event.target.value)} placeholder="optional_skill_name" style={{ ...fieldStyle, marginBottom: '8px' }} />
+            <select value={skillType} onChange={(event) => setSkillType(event.target.value)} style={{ ...fieldStyle, marginBottom: '8px' }}>
+              <option value="">Auto-detect language</option>
+              <option value="python">Python</option>
+              <option value="cmd">Windows CMD</option>
+              <option value="c++">C++</option>
+            </select>
             <textarea value={conversation} onChange={(event) => setConversation(event.target.value)} placeholder="Paste the conversation that describes the reusable behavior…" style={{ ...fieldStyle, minHeight: '110px' }} />
             <button type="button" onClick={handleCreateSkill} disabled={!activeSessionId || !conversation.trim() || skillCreating} style={{ marginTop: '8px', background: 'var(--accent-blue)', color: 'white', border: 'none', borderRadius: '6px', padding: '7px 12px', cursor: 'pointer' }}>
               {skillCreating ? 'Creating…' : 'Create and persist skill'}
             </button>
-            {!activeSessionId && <div style={{ color: 'var(--text-faint)', fontSize: '0.75rem', marginTop: '6px' }}>Open a chat session, or send its first message, so the configured model can generate the Python code.</div>}
+            {!activeSessionId && <div style={{ color: 'var(--text-faint)', fontSize: '0.75rem', marginTop: '6px' }}>Open a chat session, or send its first message, so the configured model can generate the code.</div>}
           </section>
 
           {skills.length > 0 && (
@@ -157,7 +209,7 @@ export function AgentToolsModal({ isOpen, onClose, activeSessionId }) {
               {skills.map((skill) => (
                 <div key={skill.id} style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', padding: '8px 0', borderBottom: '1px solid var(--border-subtle)' }}>
                   <div>
-                    <div style={{ color: '#34d399', fontFamily: 'var(--font-mono)', fontSize: '0.82rem' }}>{skill.name}</div>
+                    <div style={{ color: '#34d399', fontFamily: 'var(--font-mono)', fontSize: '0.82rem' }}>{skill.name} <small style={{ color: 'var(--text-faint)' }}>({skill.type})</small></div>
                     <div style={{ color: 'var(--text-muted)', fontSize: '0.76rem' }}>{skill.description}</div>
                   </div>
                   <div style={{ display: 'flex', gap: '6px' }}>
@@ -181,11 +233,19 @@ export function AgentToolsModal({ isOpen, onClose, activeSessionId }) {
                 <textarea value={editDraft.description} onChange={(event) => setEditDraft({ ...editDraft, description: event.target.value })} style={{ ...fieldStyle, minHeight: '55px', marginTop: '4px' }} />
               </label>
               <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '8px' }}>
+                Execution type
+                <select value={editDraft.type} onChange={(event) => setEditDraft({ ...editDraft, type: event.target.value })} style={{ ...fieldStyle, marginTop: '4px' }}>
+                  <option value="python">Python</option>
+                  <option value="cmd">Windows CMD</option>
+                  <option value="c++">C++</option>
+                </select>
+              </label>
+              <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '8px' }}>
                 Parameters (JSON Schema)
                 <textarea value={editDraft.parameters} onChange={(event) => setEditDraft({ ...editDraft, parameters: event.target.value })} style={{ ...fieldStyle, minHeight: '100px', marginTop: '4px', fontFamily: 'var(--font-mono)' }} />
               </label>
               <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '8px' }}>
-                Python code
+                Code ({editDraft.type})
                 <textarea value={editDraft.python_code} onChange={(event) => setEditDraft({ ...editDraft, python_code: event.target.value })} style={{ ...fieldStyle, minHeight: '180px', marginTop: '4px', fontFamily: 'var(--font-mono)' }} />
               </label>
               <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '8px' }}>

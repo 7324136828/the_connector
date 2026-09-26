@@ -55,6 +55,8 @@ class Settings(BaseSettings):
     # Storage paths
     data_dir: Path = DATA_DIR
     db_path: Path = DEFAULT_DB_PATH
+    agent_python_env_dir: Path = Path(tempfile.gettempdir()) / "the_connector_python"
+    agent_python_envs_dir: Path = Path(tempfile.gettempdir()) / "the_connector_python_envs"
 
     # Response diagnostics live in system temp, independently of DB_PATH.
     response_logging_enabled: bool = True

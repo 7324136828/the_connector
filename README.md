@@ -139,20 +139,21 @@ For Connector speech requests, call the Connector on port 8301. The LAN launcher
 | Purpose | Convert a plain-text model response, or the `text` field of a JSON model response, into WAV speech |
 | Readiness | `GET /api/speech/health` returns HTTP 200 only for a verified healthy `python-kokoro` process |
 | Invocation | `POST /api/speech` with `Content-Type: application/json` |
-| Input | `{ "content": "<the complete, unmodified model-response string>" }` |
-| Accepted model response | Non-empty plain text, or a JSON object with a non-empty, top-level string field named `text` |
+| Input | `{ "content": "<the complete, unmodified model-response string>", "actor": "am_michael" }`; `actor` is optional |
+| Accepted model response | Non-empty plain text, or a JSON object with a non-empty, top-level string field named `text` and optional `actor` |
+| Voice actors | `GET /api/speech/voices` returns `{ "default": "af_heart", "voices": [...] }`. An omitted actor uses `af_heart`. A top-level request `actor` takes precedence over an actor in the model response. |
 | Output | `audio/wav` bytes; optional timing headers include `X-Audio-Duration`, `X-Render-Seconds`, and `X-Real-Time-Factor` |
-| Rejection | HTTP 422 for empty content or a valid JSON value without an eligible `text`; 503 when Kokoro is unreachable; 502 for an invalid Kokoro response |
+| Rejection | HTTP 422 for empty content, a valid JSON value without an eligible `text`, or an invalid actor; 503 when Kokoro is unreachable; 502 for an invalid Kokoro response |
 
 Because the skill is required, the overall `GET /api/health` endpoint also returns HTTP 503 with `status: "unavailable"` when Kokoro is not healthy.
 
 Plain-text responses are spoken as-is. When the complete response is JSON, it must look like this before it is placed in the request's `content` string:
 
 ```json
-{"text":"This sentence can be spoken.","metadata":"This field is never spoken."}
+{"text":"This sentence can be spoken.","actor":"am_michael","metadata":"This field is never spoken."}
 ```
 
-Only `This sentence can be spoken.` is synthesized from that JSON object; metadata is never read aloud. JSON arrays, scalar JSON values, and objects without a string `text` field are rejected by the speech endpoint. The web UI shows **Speak** for every non-empty assistant response; clicking it on an unsupported JSON shape displays the validation error without sending content to Kokoro.
+Only `This sentence can be spoken.` is synthesized from that JSON object; `actor` selects the narrator and metadata is never read aloud. JSON arrays, scalar JSON values, and objects without a string `text` field are rejected by the speech endpoint. The web UI shows **Speak** for every non-empty assistant response; clicking it on an unsupported JSON shape displays the validation error without sending content to Kokoro.
 
 An external Python service can invoke the skill through the Connector:
 
@@ -168,21 +169,27 @@ model_response = "This plain-text response is sent to Kokoro."
 # JSON responses are also accepted; only their top-level text field is spoken:
 # model_response = json.dumps({
 #     "text": "This sentence is sent to Kokoro.",
+#     "actor": "am_michael",
 #     "metadata": "This value is not spoken.",
 # })
 
 health = httpx.get(f"{connector}/api/speech/health", timeout=5)
 health.raise_for_status()
+voices = httpx.get(f"{connector}/api/speech/voices", timeout=5)
+voices.raise_for_status()
+print(voices.json())  # {"default": "af_heart", "voices": ["af_heart", ...]}
 speech = httpx.post(
     f"{connector}/api/speech",
-    json={"content": model_response},
+    json={"content": model_response, "actor": "am_michael"},
     timeout=120,
 )
 speech.raise_for_status()
 Path("response.wav").write_bytes(speech.content)
 ```
 
-The first speech request may download the Kokoro model and English language data. Configure the internal adapter in `.env` with `KOKORO_BASE_URL`, `KOKORO_VOICE`, `KOKORO_LANGUAGE`, `KOKORO_SPEED`, and `KOKORO_TIMEOUT`; restart the Connector after a change. The LAN launcher exposes both the Connector and Kokoro without inbound authentication. Restrict access to a trusted network or with a firewall or reverse proxy.
+Omit the top-level `actor` to use one from the model response JSON, or the default voice when neither is supplied. Direct Kokoro clients can call `GET http://127.0.0.1:8302/v1/audio/voices` and send `{"input":"Hello.","voice":"am_michael"}` to `POST /v1/audio/speech`. The direct endpoint also accepts `actor` as an alias for `voice` (`voice` takes precedence), and defaults to `af_heart` when neither is supplied. The published voice IDs come from the [official Kokoro voice catalog](https://huggingface.co/hexgrad/Kokoro-82M/blob/main/VOICES.md); the selected voice determines the language when no explicit language is supplied.
+
+The first speech request may download the Kokoro model and language data. Configure the internal adapter in `.env` with `KOKORO_BASE_URL`, `KOKORO_SPEED`, and `KOKORO_TIMEOUT`; restart the Connector after a change. Voice and language are selected per request; the former `KOKORO_VOICE` and `KOKORO_LANGUAGE` settings no longer select the narrator. Non-English voices may require the corresponding optional Misaki language dependencies. The LAN launcher exposes both the Connector and Kokoro without inbound authentication. Restrict access to a trusted network or with a firewall or reverse proxy.
 
 ## Start a conversation
 

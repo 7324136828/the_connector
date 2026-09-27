@@ -106,6 +106,14 @@ class SpeechRequest(BaseModel):
     """An unmodified assistant response considered for speech synthesis."""
     model_config = ConfigDict(extra="forbid")
     content: str = Field(..., min_length=1, max_length=2 * 1024 * 1024)
+    actor: Optional[str] = Field(default=None, description="Kokoro voice, such as af_heart or am_michael")
+
+    @field_validator("actor")
+    @classmethod
+    def validate_actor(cls, value):
+        if value is not None and (not value.strip()):
+            raise ValueError("actor must be a non-empty string")
+        return value.strip() if value is not None else None
 
 
 class CloseSessionRequest(BaseModel):

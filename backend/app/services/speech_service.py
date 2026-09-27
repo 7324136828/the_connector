@@ -10,6 +10,8 @@ import httpx
 
 from ..config import settings
 
+DEFAULT_ACTOR = "af_heart"
+
 
 class InvalidSpeechContent(ValueError):
     """The model response does not contain speakable text."""
@@ -29,15 +31,15 @@ class SpeechAudio:
     headers: dict[str, str]
 
 
-def extract_speech_text(content: str) -> str:
-    """Speak plain text as-is, or only ``text`` from a JSON object."""
+def extract_speech_request(content: str) -> tuple[str, str | None]:
+    """Read speech text and optional narrator from a model response."""
     if not isinstance(content, str) or not content.strip():
         raise InvalidSpeechContent("Speech requires a non-empty model response.")
     candidate = content.strip()
     try:
         payload = json.loads(candidate)
     except json.JSONDecodeError:
-        return candidate
+        return candidate, None
     if not isinstance(payload, dict) or isinstance(payload, bool):
         raise InvalidSpeechContent(
             'A valid JSON response must be an object with a non-empty string "text" field.'
@@ -47,12 +49,21 @@ def extract_speech_text(content: str) -> str:
         raise InvalidSpeechContent(
             'Speech is available only when the JSON response has a non-empty string "text" field.'
         )
-    return text.strip()
+    actor = payload.get("actor")
+    if actor is not None and (not isinstance(actor, str) or not actor.strip()):
+        raise InvalidSpeechContent('The JSON response "actor" must be a non-empty string.')
+    return text.strip(), actor.strip() if actor is not None else None
 
 
-def synthesize_text(content: str) -> SpeechAudio:
+def extract_speech_text(content: str) -> str:
+    """Speak plain text as-is, or only ``text`` from a JSON object."""
+    return extract_speech_request(content)[0]
+
+
+def synthesize_text(content: str, actor: str | None = None) -> SpeechAudio:
     """Resolve speakable response text and request WAV audio from Kokoro."""
-    text = extract_speech_text(content)
+    text, response_actor = extract_speech_request(content)
+    voice = actor or response_actor or DEFAULT_ACTOR
     url = settings.kokoro_base_url.rstrip("/") + "/v1/audio/speech"
     try:
         response = httpx.post(
@@ -60,10 +71,10 @@ def synthesize_text(content: str) -> SpeechAudio:
             json={
                 "model": "kokoro",
                 "input": text,
-                "voice": settings.kokoro_voice,
+                "voice": voice,
                 "speed": settings.kokoro_speed,
                 "response_format": "wav",
-                "language": settings.kokoro_language,
+                "language": voice[0],
             },
             timeout=settings.kokoro_timeout,
         )
@@ -78,6 +89,8 @@ def synthesize_text(content: str) -> SpeechAudio:
         except (ValueError, AttributeError):
             detail = None
         suffix = f": {detail}" if isinstance(detail, str) and detail else ""
+        if response.status_code == 400:
+            raise InvalidSpeechContent(f"Kokoro rejected the speech request{suffix}")
         raise SpeechSynthesisError(f"Kokoro returned HTTP {response.status_code}{suffix}")
     if response.headers.get("content-type", "").split(";", 1)[0].lower() != "audio/wav":
         raise SpeechSynthesisError("Kokoro returned a response that was not WAV audio.")
@@ -88,6 +101,28 @@ def synthesize_text(content: str) -> SpeechAudio:
         if (value := response.headers.get(name)) is not None
     }
     return SpeechAudio(response.content, forwarded_headers)
+
+
+def list_voices() -> dict[str, Any]:
+    """Return the voices supported by the configured Kokoro process."""
+    url = settings.kokoro_base_url.rstrip("/") + "/v1/audio/voices"
+    try:
+        response = httpx.get(url, timeout=min(settings.kokoro_timeout, 5.0))
+    except httpx.RequestError as exc:
+        raise SpeechServiceUnavailable(
+            f"Kokoro is unavailable at {settings.kokoro_base_url}."
+        ) from exc
+    if response.status_code >= 400:
+        raise SpeechSynthesisError(f"Kokoro voice list returned HTTP {response.status_code}.")
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise SpeechSynthesisError("Kokoro voice list did not return JSON.") from exc
+    if (not isinstance(payload, dict) or not isinstance(payload.get("default"), str)
+            or not isinstance(payload.get("voices"), list)
+            or not all(isinstance(voice, str) for voice in payload["voices"])):
+        raise SpeechSynthesisError("Kokoro voice list has an invalid format.")
+    return payload
 
 
 def health() -> dict[str, Any]:

@@ -154,7 +154,7 @@ def health_check():
 def create_speech(req: SpeechRequest) -> Response:
     """Speak plain model text, or only ``text`` from a JSON model response."""
     try:
-        audio = speech_service.synthesize_text(req.content)
+        audio = speech_service.synthesize_text(req.content, req.actor)
     except speech_service.InvalidSpeechContent as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except speech_service.SpeechServiceUnavailable as exc:
@@ -169,6 +169,17 @@ def speech_health() -> Dict[str, Any]:
     """Verify the Connector's required Kokoro backend for external callers."""
     try:
         return speech_service.health()
+    except speech_service.SpeechServiceUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except speech_service.SpeechSynthesisError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.get("/api/speech/voices")
+def speech_voices() -> Dict[str, Any]:
+    """List voice actors available from the configured Kokoro service."""
+    try:
+        return speech_service.list_voices()
     except speech_service.SpeechServiceUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except speech_service.SpeechSynthesisError as exc:

@@ -26,6 +26,17 @@ import kokoro
 
 
 MODEL_REPO = "hexgrad/Kokoro-82M"
+DEFAULT_VOICE = "af_heart"
+# Voice assets: https://huggingface.co/hexgrad/Kokoro-82M/blob/main/VOICES.md
+VOICES = tuple(sorted("""
+af_heart af_alloy af_aoede af_bella af_jessica af_kore af_nicole af_nova
+af_river af_sarah af_sky am_adam am_echo am_eric am_fenrir am_liam
+am_michael am_onyx am_puck am_santa bf_alice bf_emma bf_isabella bf_lily
+bm_daniel bm_fable bm_george bm_lewis ef_dora em_alex em_santa ff_siwis
+hf_alpha hf_beta hm_omega hm_psi if_sara im_nicola jf_alpha jf_gongitsune
+jf_nezumi jf_tebukuro jm_kumo pf_dora pm_alex pm_santa zf_xiaobei
+zf_xiaoni zf_xiaoxiao zf_xiaoyi zm_yunjian zm_yunxi zm_yunxia zm_yunyang
+""".split()))
 SAMPLE_RATE = 24_000
 MAX_REQUEST_BYTES = 2 * 1024 * 1024
 LOG = logging.getLogger("kokoro-service")
@@ -222,6 +233,9 @@ class KokoroRequestHandler(BaseHTTPRequestHandler):
                 {"object": "list", "data": [{"id": "kokoro", "object": "model"}]},
             )
             return
+        if path == "/v1/audio/voices":
+            self.send_json(HTTPStatus.OK, {"default": DEFAULT_VOICE, "voices": VOICES})
+            return
         self.send_json(HTTPStatus.NOT_FOUND, {"error": "Endpoint not found"})
 
     def do_POST(self) -> None:  # noqa: N802 - stdlib handler API
@@ -231,18 +245,23 @@ class KokoroRequestHandler(BaseHTTPRequestHandler):
         try:
             payload = self.read_json()
             text = payload.get("input")
-            voice = payload.get("voice")
+            voice = payload.get("voice", payload.get("actor", DEFAULT_VOICE))
             speed = payload.get("speed", 1.0)
             response_format = payload.get("response_format", "wav")
-            lang_code = payload.get("language", "a")
+            lang_code = payload.get("language")
             if not isinstance(text, str) or not text.strip():
                 raise ValueError("input must be a non-empty string")
             if not isinstance(voice, str) or not voice.strip():
                 raise ValueError("voice must be a non-empty string")
+            voice = voice.strip()
+            if any(part not in VOICES for part in voice.split("+")):
+                raise ValueError(f"Unknown voice: {voice}")
             if not isinstance(speed, (int, float)) or not 0.5 <= float(speed) <= 2.0:
                 raise ValueError("speed must be a number between 0.5 and 2.0")
             if response_format != "wav":
                 raise ValueError("response_format must be wav")
+            if lang_code is None:
+                lang_code = voice[0]
             if not isinstance(lang_code, str) or not lang_code:
                 raise ValueError("language must be a non-empty Kokoro language code")
             body, metrics = self.service.synthesize(

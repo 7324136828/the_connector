@@ -47,8 +47,6 @@ class Settings(BaseSettings):
 
     # Isolated Kokoro text-to-speech service
     kokoro_base_url: str = "http://127.0.0.1:8302"
-    kokoro_voice: str = "af_heart"
-    kokoro_language: str = "a"
     kokoro_speed: float = Field(default=1.0, ge=0.5, le=2.0)
     kokoro_timeout: float = Field(default=120.0, gt=0)
 

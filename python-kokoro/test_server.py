@@ -12,7 +12,9 @@ from unittest.mock import Mock, patch
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-import server
+# These contract tests use a fake synthesizer and do not load the TTS model.
+with patch.dict(sys.modules, {"kokoro": SimpleNamespace(KPipeline=Mock())}):
+    import server
 
 
 class KokoroDeviceTest(unittest.TestCase):
@@ -170,6 +172,62 @@ class KokoroServerTest(unittest.TestCase):
             ("Hello.", "af_heart", 0.96, "a"),
         )
 
+    def test_speech_route_defaults_to_af_heart(self) -> None:
+        request = Request(
+            f"{self.base}/v1/audio/speech",
+            data=json.dumps({"input": "Hello."}).encode("utf-8"),
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        with urlopen(request) as response:
+            self.assertEqual(response.status, 200)
+        self.assertEqual(self.service.last_request, ("Hello.", "af_heart", 1.0, "a"))
+
+    def test_speech_route_infers_language_from_voice(self) -> None:
+        request = Request(
+            f"{self.base}/v1/audio/speech",
+            data=json.dumps({"input": "Hello.", "voice": "bm_george"}).encode("utf-8"),
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        with urlopen(request) as response:
+            self.assertEqual(response.status, 200)
+        self.assertEqual(self.service.last_request, ("Hello.", "bm_george", 1.0, "b"))
+
+    def test_speech_route_accepts_actor_alias(self) -> None:
+        request = Request(
+            f"{self.base}/v1/audio/speech",
+            data=json.dumps({"input": "Hello.", "actor": "am_michael"}).encode("utf-8"),
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        with urlopen(request) as response:
+            self.assertEqual(response.status, 200)
+        self.assertEqual(self.service.last_request, ("Hello.", "am_michael", 1.0, "a"))
+
+    def test_voice_list_includes_default_and_requested_actor(self) -> None:
+        with urlopen(f"{self.base}/v1/audio/voices") as response:
+            body = json.loads(response.read())
+        self.assertEqual(response.status, 200)
+        self.assertEqual(body["default"], "af_heart")
+        self.assertIn("af_heart", body["voices"])
+        self.assertIn("am_michael", body["voices"])
+        self.assertEqual(len(body["voices"]), len(set(body["voices"])))
+
+    def test_speech_route_rejects_unknown_voice_before_synthesis(self) -> None:
+        request = Request(
+            f"{self.base}/v1/audio/speech",
+            data=json.dumps({"input": "Hello.", "voice": "missing_actor"}).encode("utf-8"),
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        with self.assertRaises(HTTPError) as raised:
+            urlopen(request)
+        self.assertEqual(raised.exception.code, 400)
+        self.assertIn("Unknown voice", json.loads(raised.exception.read())["error"])
+        raised.exception.close()
+        self.assertFalse(hasattr(self.service, "last_request"))
+
     def test_speech_route_rejects_non_wav_format(self) -> None:
         request = Request(
             f"{self.base}/v1/audio/speech",
@@ -182,6 +240,7 @@ class KokoroServerTest(unittest.TestCase):
         with self.assertRaises(HTTPError) as raised:
             urlopen(request)
         self.assertEqual(raised.exception.code, 400)
+        raised.exception.close()
 
 
 if __name__ == "__main__":

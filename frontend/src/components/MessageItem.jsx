@@ -52,7 +52,7 @@ export function extractSpeechText(content) {
   }
 }
 
-function SpeakButton({ content }) {
+function SpeakButton({ content, actor }) {
   const [status, setStatus] = useState('idle');
   const [error, setError] = useState('');
   const audioRef = useRef(null);
@@ -87,7 +87,7 @@ function SpeakButton({ content }) {
     const controller = new AbortController();
     requestRef.current = controller;
     try {
-      const blob = await requestSpeech(content, { signal: controller.signal });
+      const blob = await requestSpeech(content, { signal: controller.signal, actor });
       requestRef.current = null;
       const url = URL.createObjectURL(blob);
       const audio = new Audio(url);
@@ -233,7 +233,7 @@ const markdownComponents = {
   ),
 };
 
-export function MessageItem({ message }) {
+export function MessageItem({ message, speechActor }) {
   const isUser = message.role === 'user';
   const agentSteps = message.agentSteps || message.agent_steps || [];
   const isAgent = Boolean(message.isAgent || agentSteps.length);
@@ -268,7 +268,7 @@ export function MessageItem({ message }) {
             <span>• {message.tokens.total_tokens} tokens</span>
           )}
 
-          {hasSpeechContent && <SpeakButton content={message.content} />}
+          {hasSpeechContent && <SpeakButton key={speechActor || 'automatic'} content={message.content} actor={speechActor} />}
 
           {!isUser && (
             <CopyButton text={message.content ?? ''} className="message-copy-all" />

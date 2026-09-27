@@ -81,6 +81,26 @@ def test_speech_endpoint_uses_actor_from_model_json(monkeypatch):
     assert captured["language"] == "a"
 
 
+@pytest.mark.parametrize("content,actor,expected_voice", [
+    ("Hello", None, "bm_george"),
+    ('{"text":"Hello","actor":"am_michael"}', None, "am_michael"),
+    ('{"text":"Hello","actor":"am_michael"}', "af_heart", "af_heart"),
+])
+def test_configured_actor_is_used_only_when_request_has_no_actor(monkeypatch, content, actor, expected_voice):
+    captured = {}
+    monkeypatch.setattr(speech_service.settings, "kokoro_voice", "bm_george")
+
+    def kokoro_post(url, *, json, timeout):
+        captured.update(json)
+        return httpx.Response(200, content=b"RIFF-actor", headers={"Content-Type": "audio/wav"})
+
+    monkeypatch.setattr(speech_service.httpx, "post", kokoro_post)
+    response = client.post("/api/speech", json={"content": content, "actor": actor})
+    assert response.status_code == 200
+    assert captured["voice"] == expected_voice
+    assert captured["language"] == expected_voice[0]
+
+
 def test_speech_endpoint_explicit_actor_overrides_model_json(monkeypatch):
     captured = {}
 
@@ -173,6 +193,15 @@ def test_connector_lists_kokoro_voices(monkeypatch):
     response = client.get("/api/speech/voices")
     assert response.status_code == 200
     assert response.json() == {"default": "af_heart", "voices": ["af_heart", "am_michael"]}
+
+
+def test_connector_voice_list_reports_configured_default(monkeypatch):
+    monkeypatch.setattr(speech_service.settings, "kokoro_voice", "am_michael")
+    monkeypatch.setattr(speech_service.httpx, "get", lambda *args, **kwargs:
+                        httpx.Response(200, json={"default": "af_heart", "voices": ["af_heart", "am_michael"]}))
+    response = client.get("/api/speech/voices")
+    assert response.status_code == 200
+    assert response.json()["default"] == "am_michael"
 
 
 def test_connector_voice_list_reports_unavailable_kokoro(monkeypatch):

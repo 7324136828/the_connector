@@ -129,7 +129,7 @@
   .sidebar-backdrop { display: block; position: fixed; inset: 0; z-index: 30; border: 0; background: rgba(0, 0, 0, .62); }
   .mobile-sidebar-toggle, .mobile-sidebar-close { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 40px; width: 40px; height: 40px; border: 1px solid var(--border-subtle); border-radius: 8px; background: var(--bg-card); color: var(--text-main); cursor: pointer; }
   .mobile-sidebar-close { flex-basis: 34px; width: 34px; height: 34px; font-size: 1.35rem; }
-  .sidebar-header, .sidebar-controls { padding: 10px; }
+  .sidebar-header, .sidebar-footer { padding: 10px; }
   .brand { font-size: .88rem; }
   .chat-frame { width: 100%; }
   .chat-header { padding-top: max(10px, env(safe-area-inset-top)); flex-wrap: wrap; }

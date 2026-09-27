@@ -10,8 +10,6 @@ import httpx
 
 from ..config import settings
 
-DEFAULT_ACTOR = "af_heart"
-
 
 class InvalidSpeechContent(ValueError):
     """The model response does not contain speakable text."""
@@ -63,7 +61,7 @@ def extract_speech_text(content: str) -> str:
 def synthesize_text(content: str, actor: str | None = None) -> SpeechAudio:
     """Resolve speakable response text and request WAV audio from Kokoro."""
     text, response_actor = extract_speech_request(content)
-    voice = actor or response_actor or DEFAULT_ACTOR
+    voice = actor or response_actor or settings.kokoro_voice
     url = settings.kokoro_base_url.rstrip("/") + "/v1/audio/speech"
     try:
         response = httpx.post(
@@ -122,7 +120,7 @@ def list_voices() -> dict[str, Any]:
             or not isinstance(payload.get("voices"), list)
             or not all(isinstance(voice, str) for voice in payload["voices"])):
         raise SpeechSynthesisError("Kokoro voice list has an invalid format.")
-    return payload
+    return {**payload, "default": settings.kokoro_voice}
 
 
 def health() -> dict[str, Any]:

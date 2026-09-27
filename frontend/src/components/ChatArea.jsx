@@ -2,7 +2,7 @@
 import { MessageItem } from './MessageItem';
 import { getExampleConfigUrl } from '../services/api';
 
-export function ChatArea({ messages, loading, disabled, onSendMessage, hasConfig, onOpenConfig, onOpenLibrary, pastMemory, agentMode, draftVersion }) {
+export function ChatArea({ messages, loading, disabled, onSendMessage, hasConfig, onOpenConfig, onOpenLibrary, pastMemory, agentMode, draftVersion, speechActor }) {
   const [inputText, setInputText] = useState('');
   const messagesEndRef = useRef(null);
   const textareaRef = useRef(null);
@@ -46,7 +46,7 @@ export function ChatArea({ messages, loading, disabled, onSendMessage, hasConfig
           </div>
         ) : (
           <div className="messages-inner">
-            {messages.map((message, index) => <MessageItem key={message.id || index} message={message} />)}
+            {messages.map((message, index) => <MessageItem key={message.id || index} message={message} speechActor={speechActor} />)}
             {loading && (
               <div className="message-row" role="status">
                 <div className="avatar avatar-assistant"><span className="pulsing-dot" /></div>

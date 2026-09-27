@@ -83,11 +83,13 @@ export function runAgent({ prompt, sessionId }) {
   return request('/agent/run', { method: 'POST', body: { prompt, session_id: sessionId } });
 }
 
-export async function requestSpeech(content, { signal } = {}) {
+export function getSpeechVoices() { return request('/speech/voices'); }
+
+export async function requestSpeech(content, { signal, actor } = {}) {
   const response = await fetch(BASE_URL + '/speech', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ content }),
+    body: JSON.stringify({ content, ...(actor ? { actor } : {}) }),
     signal,
   });
   if (!response.ok) {

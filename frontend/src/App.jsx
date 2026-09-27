@@ -1,5 +1,6 @@
 ﻿import React, { useState, useEffect, useRef } from 'react';
 import { Sidebar } from './components/Sidebar';
+import { SettingsModal } from './components/SettingsModal';
 import { ModelSelector } from './components/ModelSelector';
 import { ChatArea } from './components/ChatArea';
 import { ConfigModal } from './components/ConfigModal';
@@ -11,7 +12,7 @@ import { visibleSessions } from './components/sessionHelpers';
 import {
   createNewSession, sendMessage, closeSession, getSessions, getSession,
   getModels, runAgent, updateSessionConfig, recordConfigLoad,
-  getPythonEnvironments, clearAllHistory,
+  getPythonEnvironments, clearAllHistory, getSpeechVoices,
 } from './services/api';
 
 export function App() {
@@ -23,11 +24,12 @@ export function App() {
   const [selectedConfig, setSelectedConfig] = useState(null);
   const [selectedConfigId, setSelectedConfigId] = useState(null);
   const [selectedHistoryId, setSelectedHistoryId] = useState(null);
-  const [agentMode, setAgentMode] = useState(false);
+  const [agentMode, setAgentMode] = useState(true);
   const [loading, setLoading] = useState(false);
   const [savingConfig, setSavingConfig] = useState(false);
   const [error, setError] = useState('');
   const [configModalOpen, setConfigModalOpen] = useState(false);
+  const [settingsModalOpen, setSettingsModalOpen] = useState(false);
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [libraryDraft, setLibraryDraft] = useState(null);
   const [toolsModalOpen, setToolsModalOpen] = useState(false);
@@ -35,6 +37,15 @@ export function App() {
   const [exportModalOpen, setExportModalOpen] = useState(false);
   const [pythonEnvironment, setPythonEnvironment] = useState(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [speechActor, setSpeechActor] = useState(() => {
+    try { return window.localStorage.getItem('connector.speechActor') || ''; }
+    catch { return ''; }
+  });
+  const [speechVoices, setSpeechVoices] = useState(['af_heart']);
+  const [speechDefaultActor, setSpeechDefaultActor] = useState('af_heart');
+  const [speechVoicesLoading, setSpeechVoicesLoading] = useState(true);
+  const [speechVoicesError, setSpeechVoicesError] = useState('');
+  const [speechVoicesRefresh, setSpeechVoicesRefresh] = useState(0);
   const [showSystemSessions, setShowSystemSessions] = useState(() => {
     try { return window.localStorage.getItem('connector.showSystemSessions') === 'true'; }
     catch { return false; }
@@ -48,6 +59,33 @@ export function App() {
     try { window.localStorage.setItem('connector.showSystemSessions', String(showSystemSessions)); }
     catch { /* The preference remains active for this page when storage is unavailable. */ }
   }, [showSystemSessions]);
+
+  useEffect(() => {
+    try { window.localStorage.setItem('connector.speechActor', speechActor); }
+    catch { /* Keep the selected actor for this page when storage is unavailable. */ }
+  }, [speechActor]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setSpeechVoicesLoading(true);
+    setSpeechVoicesError('');
+    getSpeechVoices().then((catalog) => {
+      if (cancelled) return;
+      setSpeechVoices(catalog.voices);
+      setSpeechDefaultActor(catalog.default);
+    }).catch((err) => {
+      if (!cancelled) setSpeechVoicesError('Could not load voice actors: ' + err.message);
+    }).finally(() => {
+      if (!cancelled) setSpeechVoicesLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [speechVoicesRefresh]);
+
+  useEffect(() => {
+    if (!speechVoicesError || speechVoicesLoading) return undefined;
+    const timer = window.setTimeout(() => setSpeechVoicesRefresh((value) => value + 1), 30_000);
+    return () => window.clearTimeout(timer);
+  }, [speechVoicesError, speechVoicesLoading, speechVoicesRefresh]);
 
   useEffect(() => {
     let cancelled = false;
@@ -240,12 +278,10 @@ export function App() {
         isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)}
         sessions={displayedSessions} activeSessionId={activeSessionId}
         onSelectSession={selectSession} onNewSession={handleNewSession}
-        onCloseSession={handleCloseSession} pastMemory={pastMemory}
-        onTogglePastMemory={handleTogglePastMemory} agentMode={agentMode}
-        onToggleAgentMode={setAgentMode} onOpenConfig={() => { setSidebarOpen(false); setConfigModalOpen(true); }}
-        showSystemSessions={showSystemSessions} onToggleShowSystemSessions={setShowSystemSessions}
+        onCloseSession={handleCloseSession}
+        onOpenSettings={() => { setSidebarOpen(false); setSettingsModalOpen(true); }}
+        onOpenConfig={() => { setSidebarOpen(false); setConfigModalOpen(true); }}
         onOpenTools={() => { setSidebarOpen(false); setToolsModalOpen(true); }} disabled={busy}
-        hasConfig={Boolean(selectedConfig)}
         onOpenLibrary={() => { setSidebarOpen(false); setLibraryDraft(null); setLibraryOpen(true); }}
       />
       {sidebarOpen && <button className="sidebar-backdrop" type="button" onClick={() => setSidebarOpen(false)} aria-label="Close navigation" />}
@@ -270,9 +306,21 @@ export function App() {
           onSendMessage={handleSendMessage} hasConfig={Boolean(selectedConfig)}
           onOpenConfig={() => setConfigModalOpen(true)} pastMemory={pastMemory}
           agentMode={agentMode} draftVersion={draftVersion}
+          speechActor={speechActor}
           onOpenLibrary={() => { setLibraryDraft(null); setLibraryOpen(true); }}
         />
       </div>
+      <SettingsModal
+        isOpen={settingsModalOpen} onClose={() => setSettingsModalOpen(false)}
+        disabled={busy} hasConfig={Boolean(selectedConfig)}
+        pastMemory={pastMemory} onTogglePastMemory={handleTogglePastMemory}
+        showSystemSessions={showSystemSessions} onToggleShowSystemSessions={setShowSystemSessions}
+        agentMode={agentMode} onToggleAgentMode={setAgentMode}
+        speechActor={speechActor} onSpeechActorChange={setSpeechActor}
+        speechVoices={speechVoices} speechDefaultActor={speechDefaultActor}
+        speechVoicesLoading={speechVoicesLoading} speechVoicesError={speechVoicesError}
+        onRetrySpeechVoices={() => setSpeechVoicesRefresh((value) => value + 1)}
+      />
       <ConfigModal
         isOpen={configModalOpen} onClose={() => setConfigModalOpen(false)}
         config={selectedConfig} models={models} activeSessionId={activeSessionId}

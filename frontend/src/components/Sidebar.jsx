@@ -3,9 +3,7 @@
 export function Sidebar({
   isOpen, onClose,
   sessions, activeSessionId, onSelectSession, onNewSession, onCloseSession,
-  pastMemory, onTogglePastMemory, agentMode, onToggleAgentMode,
-  showSystemSessions, onToggleShowSystemSessions,
-  onOpenConfig, onOpenTools, onOpenLibrary, disabled, hasConfig,
+  onOpenSettings, onOpenConfig, onOpenTools, onOpenLibrary, disabled,
 }) {
   return (
     <aside className={'sidebar' + (isOpen ? ' sidebar-open' : '')} aria-label="Chat sessions and settings">
@@ -52,30 +50,11 @@ export function Sidebar({
           </div>
         ))}
       </div>
-      <div className="sidebar-controls">
-        <div className="control-row">
-          <label htmlFor="past-memory" className="control-label" title="Include saved conversation memory according to this session's config.json.">
-            Past Memory
-          </label>
-          <label className="switch">
-            <input id="past-memory" type="checkbox" checked={pastMemory} onChange={(event) => onTogglePastMemory(event.target.checked)} disabled={disabled || !hasConfig} />
-            <span className="slider" />
-          </label>
-        </div>
-        <div className="control-row">
-          <label htmlFor="show-system-sessions" className="control-label" title="Include API-created system sessions in the session list.">Show System Sessions</label>
-          <label className="switch">
-            <input id="show-system-sessions" type="checkbox" checked={showSystemSessions} onChange={(event) => onToggleShowSystemSessions(event.target.checked)} disabled={disabled} />
-            <span className="slider" />
-          </label>
-        </div>
-        <div className="control-row">
-          <label htmlFor="agent-mode" className="control-label" title="Let the configured models use tools to complete a task.">Agentic Mode</label>
-          <label className="switch">
-            <input id="agent-mode" type="checkbox" checked={agentMode} onChange={(event) => onToggleAgentMode(event.target.checked)} disabled={disabled} />
-            <span className="slider" />
-          </label>
-        </div>
+      <div className="sidebar-footer">
+        <button
+          type="button" className="setting-button"
+          aria-haspopup="dialog" onClick={onOpenSettings}
+        >Settings</button>
         <div className="config-actions">
           <button className="config-button" onClick={onOpenLibrary} disabled={disabled}>Config Library</button>
           <button className="config-button" onClick={onOpenConfig} disabled={disabled}>Session Config</button>

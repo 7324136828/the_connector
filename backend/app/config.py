@@ -5,7 +5,7 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 from typing import List
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from .storage import prepare_database
@@ -47,8 +47,16 @@ class Settings(BaseSettings):
 
     # Isolated Kokoro text-to-speech service
     kokoro_base_url: str = "http://127.0.0.1:8302"
+    kokoro_voice: str = "af_heart"
     kokoro_speed: float = Field(default=1.0, ge=0.5, le=2.0)
     kokoro_timeout: float = Field(default=120.0, gt=0)
+
+    @field_validator("kokoro_voice")
+    @classmethod
+    def validate_kokoro_voice(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("KOKORO_VOICE must be a non-empty voice actor ID")
+        return value.strip()
 
     # Storage paths
     data_dir: Path = DATA_DIR

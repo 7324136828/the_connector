@@ -141,7 +141,7 @@ For Connector speech requests, call the Connector on port 8301. The LAN launcher
 | Invocation | `POST /api/speech` with `Content-Type: application/json` |
 | Input | `{ "content": "<the complete, unmodified model-response string>", "actor": "am_michael" }`; `actor` is optional |
 | Accepted model response | Non-empty plain text, or a JSON object with a non-empty, top-level string field named `text` and optional `actor` |
-| Voice actors | `GET /api/speech/voices` returns `{ "default": "af_heart", "voices": [...] }`. An omitted actor uses `af_heart`. A top-level request `actor` takes precedence over an actor in the model response. |
+| Voice actors | `GET /api/speech/voices` returns `{ "default": "<configured default>", "voices": [...] }`. Actor precedence: top-level request, model response JSON, `KOKORO_VOICE` setting, then `af_heart`. |
 | Output | `audio/wav` bytes; optional timing headers include `X-Audio-Duration`, `X-Render-Seconds`, and `X-Real-Time-Factor` |
 | Rejection | HTTP 422 for empty content, a valid JSON value without an eligible `text`, or an invalid actor; 503 when Kokoro is unreachable; 502 for an invalid Kokoro response |
 
@@ -154,6 +154,18 @@ Plain-text responses are spoken as-is. When the complete response is JSON, it mu
 ```
 
 Only `This sentence can be spoken.` is synthesized from that JSON object; `actor` selects the narrator and metadata is never read aloud. JSON arrays, scalar JSON values, and objects without a string `text` field are rejected by the speech endpoint. The web UI shows **Speak** for every non-empty assistant response; clicking it on an unsupported JSON shape displays the validation error without sending content to Kokoro.
+
+In the web UI's sidebar, click **Settings** to open a modal with Voice actor, Past Memory, Show System Sessions, and Agentic Mode. Close it with the Close button, Escape, or by clicking outside the window. Past Memory defaults to on (unless the session's configuration disables it), Show System Sessions defaults to off, and Agentic Mode defaults to on. Saved preferences and session settings still apply.
+
+Choose a **Voice actor** in Settings for the Speak buttons. The list comes from `/api/speech/voices`, and the choice is remembered in this browser across sessions and page reloads. If fetching fails, the app automatically retries after 30 seconds, repeating until successful even when Settings is closed; you can also select Retry immediately. Selecting an actor overrides any actor in the model response JSON. Choose **Automatic** to use the response actor or the configured default.
+
+To set the Connector's default narrator for requests without an actor, add this to `.env` and restart the Connector API:
+
+```dotenv
+KOKORO_VOICE=am_michael
+```
+
+If `KOKORO_VOICE` is not set, the default is `af_heart`. The standalone Kokoro service continues to default to `af_heart` for direct requests.
 
 An external Python service can invoke the skill through the Connector:
 
@@ -189,7 +201,7 @@ Path("response.wav").write_bytes(speech.content)
 
 Omit the top-level `actor` to use one from the model response JSON, or the default voice when neither is supplied. Direct Kokoro clients can call `GET http://127.0.0.1:8302/v1/audio/voices` and send `{"input":"Hello.","voice":"am_michael"}` to `POST /v1/audio/speech`. The direct endpoint also accepts `actor` as an alias for `voice` (`voice` takes precedence), and defaults to `af_heart` when neither is supplied. The published voice IDs come from the [official Kokoro voice catalog](https://huggingface.co/hexgrad/Kokoro-82M/blob/main/VOICES.md); the selected voice determines the language when no explicit language is supplied.
 
-The first speech request may download the Kokoro model and language data. Configure the internal adapter in `.env` with `KOKORO_BASE_URL`, `KOKORO_SPEED`, and `KOKORO_TIMEOUT`; restart the Connector after a change. Voice and language are selected per request; the former `KOKORO_VOICE` and `KOKORO_LANGUAGE` settings no longer select the narrator. Non-English voices may require the corresponding optional Misaki language dependencies. The LAN launcher exposes both the Connector and Kokoro without inbound authentication. Restrict access to a trusted network or with a firewall or reverse proxy.
+The first speech request may download the Kokoro model and language data. Configure the internal adapter in `.env` with `KOKORO_BASE_URL`, `KOKORO_VOICE`, `KOKORO_SPEED`, and `KOKORO_TIMEOUT`; restart the Connector after a change. Language follows the selected actor; `KOKORO_LANGUAGE` is no longer used. Non-English voices may require the corresponding optional Misaki language dependencies. The LAN launcher exposes both the Connector and Kokoro without inbound authentication. Restrict access to a trusted network or with a firewall or reverse proxy.
 
 ## Start a conversation
 

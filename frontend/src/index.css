@@ -222,13 +222,39 @@ body {
   background-color: rgba(239, 68, 68, 0.15);
 }
 
-.sidebar-controls {
+.sidebar-footer {
   padding: 12px 16px;
   border-top: 1px solid var(--border-subtle);
   display: flex;
   flex-direction: column;
   gap: 12px;
   background-color: rgba(0, 0, 0, 0.15);
+  flex-shrink: 0;
+  max-height: 70%;
+  overflow-y: auto;
+}
+
+.setting-button {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  background: var(--bg-card);
+  color: var(--text-main);
+  font-size: 0.82rem;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.setting-button:hover {
+  border-color: var(--accent-primary);
+}
+
+.settings-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
 }
 
 .control-row {
@@ -236,6 +262,34 @@ body {
   align-items: center;
   justify-content: space-between;
   font-size: 0.82rem;
+}
+
+.speech-setting {
+  display: grid;
+  gap: 6px;
+  font-size: 0.82rem;
+}
+
+.speech-setting select {
+  width: 100%;
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  color: var(--text-main);
+  background: var(--bg-card);
+}
+
+.speech-setting-description {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+}
+
+.speech-setting-error {
+  display: grid;
+  gap: 6px;
+  color: var(--accent-danger);
+  font-size: 0.72rem;
 }
 
 .control-label {
@@ -883,6 +937,10 @@ input:checked + .slider:before {
   display: flex;
   flex-direction: column;
   box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+}
+
+.settings-dialog {
+  max-width: 460px;
 }
 
 .modal-header {

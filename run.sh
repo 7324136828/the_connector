@@ -23,7 +23,7 @@ echo "========================================================"
 echo "Starting The Connector Full-Stack Services"
 echo "Backend:  http://localhost:8301 (API & Docs: /docs)"
 echo "Kokoro:  http://localhost:8302 (required speech backend)"
-echo "Frontend: http://localhost:5173"
+echo "Frontend: http://localhost:5130"
 echo "========================================================"
 
 # Graceful cleanup on SIGINT / SIGTERM / EXIT

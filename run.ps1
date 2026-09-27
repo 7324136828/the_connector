@@ -1,5 +1,21 @@
+param(
+    [switch]$Local,
+    [ValidateRange(1, 65535)][int]$UiPort = 5130,
+    [ValidateRange(1, 65535)][int]$BackendPort = 8301,
+    [ValidateRange(1, 65535)][int]$KokoroPort = 8302
+)
+
 $ErrorActionPreference = "Stop"
 $root = $PSScriptRoot
+$publicHost = if ($Local) { "127.0.0.1" } else { "0.0.0.0" }
+$kokoroHost = "127.0.0.1"
+
+Write-Host "========================================================"
+Write-Host "Starting The Connector Full-Stack Services"
+Write-Host "Frontend: http://$($publicHost):$UiPort"
+Write-Host "Backend:  http://$($publicHost):$BackendPort (API and /docs)"
+Write-Host "Kokoro:  http://$($kokoroHost):$KokoroPort (internal speech backend)"
+Write-Host "========================================================"
 
 # Put this supervisor in a Windows job whose members are killed when the
 # supervisor's last handle closes. The three servers are launched directly into
@@ -177,22 +193,25 @@ try {
         throw "Frontend dependencies are missing. Run setup.bat first."
     }
 
+    $env:CONNECTOR_BACKEND_PORT = [string]$BackendPort
+    $env:KOKORO_BASE_URL = "http://127.0.0.1:$KokoroPort"
+
     $services += Start-ConnectorProcess `
         -Name "Connector API" `
         -FilePath $backendPython `
-        -ArgumentList @("run_backend.py") `
+        -ArgumentList @("run_backend.py", "--host", $publicHost, "--port", [string]$BackendPort) `
         -WorkingDirectory $root
 
     $services += Start-ConnectorProcess `
         -Name "Kokoro speech" `
         -FilePath $kokoroPython `
-        -ArgumentList @("-u", ('"{0}"' -f $kokoroScript), "--host", "127.0.0.1", "--port", "8302", "--device", "auto") `
+        -ArgumentList @("-u", ('"{0}"' -f $kokoroScript), "--host", $kokoroHost, "--port", [string]$KokoroPort, "--device", "auto") `
         -WorkingDirectory (Join-Path $root "python-kokoro")
 
     $services += Start-ConnectorProcess `
         -Name "frontend" `
         -FilePath $node `
-        -ArgumentList @(('"{0}"' -f $viteScript)) `
+        -ArgumentList @(('"{0}"' -f $viteScript), "--host", $publicHost, "--port", [string]$UiPort, "--strictPort") `
         -WorkingDirectory (Join-Path $root "frontend")
 
     Write-Host "[RUN.BAT] All output is sharing this window. Press Ctrl+C or close it to stop everything."

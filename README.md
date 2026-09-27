@@ -122,11 +122,13 @@ Get-Content -LiteralPath "$env:TEMP\the_connector\logs\post_api_chat_completions
 
 ## Run the full application
 
-For the web UI, run `setup.bat` then `run.bat` on Windows. On Linux/macOS, run `chmod +x setup.sh run.sh`, then `./setup.sh` and `./run.sh`. Python 3.12 is required. Setup installs the main Python environment, frontend dependencies, and the separate Kokoro environment; Kokoro uses the CPU build by default. Select CUDA explicitly with `setup.bat --kokoro-device cuda` or `./setup.sh --kokoro-device cuda`. The full application uses frontend **http://localhost:5173**, the Connector API at **http://127.0.0.1:8301**, and Kokoro at **http://127.0.0.1:8302**. Vite proxies `/api` to port 8301. On Windows all three services share the `run.bat` console; press Ctrl+C or close that window to stop the full stack.
+For the web UI, run `setup.bat` then `run_default.bat` (or `run.bat`) on Windows. Use `run_lan.bat` to let other devices on the LAN reach the UI at `http://<your-computer-ip>:5130` and the API at `http://<your-computer-ip>:8301`. On Linux/macOS, run `chmod +x setup.sh run.sh`, then `./setup.sh` and `./run.sh`. Python 3.12 is required. Setup installs the main Python environment, frontend dependencies, and the separate Kokoro environment; Kokoro uses the CPU build by default. Select CUDA explicitly with `setup.bat --kokoro-device cuda` or `./setup.sh --kokoro-device cuda`. The local Windows launch uses frontend **http://localhost:5130**, the Connector API at **http://localhost:8301**, and Kokoro at **http://localhost:8302**. Vite proxies `/api` to port 8301. On Windows all three services share one console; press Ctrl+C or close that window to stop the full stack. The LAN launcher binds the UI and API to `0.0.0.0`, while Kokoro stays on `127.0.0.1`. Allow inbound TCP ports 5130 and 8301 in the firewall if needed. The API has no inbound authentication, so use the LAN launcher only on a network you trust.
+
+The Windows launchers accept PowerShell port overrides, for example `run_default.bat -UiPort 5131 -BackendPort 8401`. `run_default.bat` forwards its arguments to `run_lan.bat` with local binding selected. The backend proxy and Kokoro URL follow the selected ports.
 
 ### Kokoro speech skill (required)
 
-Kokoro is a required Connector service. It remains isolated in its own Python 3.12 environment because its PyTorch dependencies differ from the main API. `run.bat` and `run.sh` refuse to start the application when that environment is missing, and then launch Kokoro on port 8302 alongside the Connector.
+Kokoro is a required Connector service. It remains isolated in its own Python 3.12 environment because its PyTorch dependencies differ from the main API. The Windows full-stack launchers run setup if either environment is missing, then launch Kokoro on port 8302 alongside the Connector.
 
 External services must call the Connector on port 8301 rather than calling Kokoro directly. This preserves the model-response parsing rules and keeps the internal synthesis process on loopback.
 

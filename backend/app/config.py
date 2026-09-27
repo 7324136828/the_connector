@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     # Server settings
     app_name: str = "The Connector API"
     app_version: str = "1.0.0"
-    debug: bool = False
+    debug: bool = Field(default=False, validation_alias="CONNECTOR_DEBUG")
     cors_origins: List[str] = ["*"]
     host: str = "0.0.0.0"
     port: int = 8301

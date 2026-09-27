@@ -8,14 +8,19 @@ param(
 $ErrorActionPreference = "Stop"
 $root = $PSScriptRoot
 $publicHost = if ($Local) { "127.0.0.1" } else { "0.0.0.0" }
-$kokoroHost = "127.0.0.1"
+$kokoroHost = $publicHost
 
 Write-Host "========================================================"
 Write-Host "Starting The Connector Full-Stack Services"
 Write-Host "Frontend: http://$($publicHost):$UiPort"
 Write-Host "Backend:  http://$($publicHost):$BackendPort (API and /docs)"
-Write-Host "Kokoro:  http://$($kokoroHost):$KokoroPort (internal speech backend)"
+Write-Host "Kokoro:  http://$($kokoroHost):$KokoroPort (speech backend)"
 Write-Host "========================================================"
+if (-not $Local) {
+    Write-Host "From another device, replace 0.0.0.0 with this PC's LAN IP address."
+    Write-Host "Test API: http://<LAN-IP>:$BackendPort/api/health"
+    Write-Host "Test Kokoro: http://<LAN-IP>:$KokoroPort/health"
+}
 
 # Put this supervisor in a Windows job whose members are killed when the
 # supervisor's last handle closes. The three servers are launched directly into

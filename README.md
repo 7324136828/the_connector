@@ -122,15 +122,15 @@ Get-Content -LiteralPath "$env:TEMP\the_connector\logs\post_api_chat_completions
 
 ## Run the full application
 
-For the web UI, run `setup.bat` then `run_default.bat` (or `run.bat`) on Windows. Use `run_lan.bat` to let other devices on the LAN reach the UI at `http://<your-computer-ip>:5130` and the API at `http://<your-computer-ip>:8301`. On Linux/macOS, run `chmod +x setup.sh run.sh`, then `./setup.sh` and `./run.sh`. Python 3.12 is required. Setup installs the main Python environment, frontend dependencies, and the separate Kokoro environment; Kokoro uses the CPU build by default. Select CUDA explicitly with `setup.bat --kokoro-device cuda` or `./setup.sh --kokoro-device cuda`. The local Windows launch uses frontend **http://localhost:5130**, the Connector API at **http://localhost:8301**, and Kokoro at **http://localhost:8302**. Vite proxies `/api` to port 8301. On Windows all three services share one console; press Ctrl+C or close that window to stop the full stack. The LAN launcher binds the UI and API to `0.0.0.0`, while Kokoro stays on `127.0.0.1`. Allow inbound TCP ports 5130 and 8301 in the firewall if needed. The API has no inbound authentication, so use the LAN launcher only on a network you trust.
+For the web UI, run `setup.bat` then `run_default.bat` (or `run.bat`) on Windows. Use `run_lan.bat` to let other devices on the LAN reach the UI at `http://<your-computer-ip>:5130`, the API at `http://<your-computer-ip>:8301`, and Kokoro health at `http://<your-computer-ip>:8302/health`. On Linux/macOS, run `chmod +x setup.sh run.sh`, then `./setup.sh` and `./run.sh`. Python 3.12 is required. Setup installs the main Python environment, frontend dependencies, and the separate Kokoro environment; Kokoro uses the CPU build by default. Select CUDA explicitly with `setup.bat --kokoro-device cuda` or `./setup.sh --kokoro-device cuda`. The local Windows launch uses frontend **http://localhost:5130**, the Connector API at **http://localhost:8301**, and Kokoro at **http://localhost:8302**. Vite proxies `/api` to port 8301. On Windows all three services share one console; press Ctrl+C or close that window to stop the full stack. The LAN launcher binds all three services to `0.0.0.0`; restart it after switching from the local launcher. Allow inbound TCP ports 5130, 8301, and 8302 in the firewall if needed. The API has no inbound authentication, so use the LAN launcher only on a network you trust.
 
-The Windows launchers accept PowerShell port overrides, for example `run_default.bat -UiPort 5131 -BackendPort 8401`. `run_default.bat` forwards its arguments to `run_lan.bat` with local binding selected. The backend proxy and Kokoro URL follow the selected ports.
+The Windows launchers accept PowerShell port overrides, for example `run_default.bat -UiPort 5131 -BackendPort 8401`. `run_default.bat` forwards its arguments to `run_lan.bat` with local binding selected. The backend proxy and Kokoro URL follow the selected ports. On another device, use the computer's LAN IP address, never `localhost` or `0.0.0.0`. Check `http://<LAN-IP>:8301/api/health` and `http://<LAN-IP>:8302/health` after starting `run_lan.bat`.
 
 ### Kokoro speech skill (required)
 
 Kokoro is a required Connector service. It remains isolated in its own Python 3.12 environment because its PyTorch dependencies differ from the main API. The Windows full-stack launchers run setup if either environment is missing, then launch Kokoro on port 8302 alongside the Connector.
 
-External services must call the Connector on port 8301 rather than calling Kokoro directly. This preserves the model-response parsing rules and keeps the internal synthesis process on loopback.
+For Connector speech requests, call the Connector on port 8301. The LAN launcher also exposes Kokoro on port 8302 for direct clients; the default launcher keeps both services on loopback.
 
 #### Skill contract: `kokoro_speak`
 
@@ -182,7 +182,7 @@ speech.raise_for_status()
 Path("response.wav").write_bytes(speech.content)
 ```
 
-The first speech request may download the Kokoro model and English language data. Configure the internal adapter in `.env` with `KOKORO_BASE_URL`, `KOKORO_VOICE`, `KOKORO_LANGUAGE`, `KOKORO_SPEED`, and `KOKORO_TIMEOUT`; restart the Connector after a change. Keep port 8302 private. If an external service runs on another machine, start only the Connector API with an intentional network bind such as `run_backend.bat --host 0.0.0.0`, restrict access with a firewall or reverse proxy, and leave Kokoro bound to `127.0.0.1`. The Connector has no inbound authentication by default.
+The first speech request may download the Kokoro model and English language data. Configure the internal adapter in `.env` with `KOKORO_BASE_URL`, `KOKORO_VOICE`, `KOKORO_LANGUAGE`, `KOKORO_SPEED`, and `KOKORO_TIMEOUT`; restart the Connector after a change. The LAN launcher exposes both the Connector and Kokoro without inbound authentication. Restrict access to a trusted network or with a firewall or reverse proxy.
 
 ## Start a conversation
 

@@ -1,0 +1,20 @@
+{
+  "system_prompt": "You are a helpful, accurate assistant. Prefer concise answers and expand when asked. Use tools when necessary to complete the user's request.",
+  "past_memory": true,
+  "context_window": 4,
+  "memory_window": 4,
+  "memory_scope": "session",
+  "memory_sources": {
+    "user_sessions": true,
+    "system_sessions": false,
+    "completion_events": false
+  },
+  "agent_final_retries": 1,
+  "sequences": [
+    {
+      "provider": "openrouter",
+      "model": "qwen/qwen3-30b-a3b-instruct-2507",
+      "retries": 0
+    }
+  ]
+}

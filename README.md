@@ -217,6 +217,10 @@ The downloadable example uses provider `openai`, model `gpt-5-nano`, with `minim
 
 The configuration editor exposes an effort selector for each supported route, including every choice inside a probability group. Changes update the JSON. Saving an existing session's configuration or changing its Past Memory toggle persists the change for subsequent requests. Other sessions retain their own settings.
 
+For a ready-to-upload OpenRouter example using six models (including Gemma 3 27B) and a probabilistic selector, see [config-example/low-cost-openrouter.json](config-example/low-cost-openrouter.json). Its [usage notes](config-example/README.md) explain the selection weights, reasoning settings, and cost controls.
+
+The [example configuration guide](config-example/README.md#individual-openrouter-models) also lists one config per model for selecting a single OpenRouter model in a chat.
+
 Messages render Markdown headings, emphasis, lists, tables, quotes, task lists, and code. Code blocks preserve whitespace and include copy controls. Raw HTML is disabled and unsafe link schemes are filtered. Sessions can be exported as ZIP files containing Markdown and JSON transcripts plus metadata.
 
 [![The Connector chat interface showing saved sessions, a conversation, and provider and model details](images/chat_support.png)](images/chat_support.png)

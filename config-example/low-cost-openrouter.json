@@ -1,0 +1,54 @@
+{
+  "system_prompt": "You are a helpful, accurate assistant. Prefer concise answers and expand when asked. Use tools when necessary to complete the user's request.",
+  "past_memory": true,
+  "context_window": 4,
+  "memory_window": 4,
+  "memory_scope": "session",
+  "memory_sources": {
+    "user_sessions": true,
+    "system_sessions": false,
+    "completion_events": false
+  },
+  "agent_final_retries": 1,
+  "sequences": [
+    {
+      "type": "probability",
+      "retries": 0,
+      "choices": [
+        {
+          "provider": "openrouter",
+          "model": "openai/gpt-oss-20b",
+          "effort": "low",
+          "probability": 40
+        },
+        {
+          "provider": "openrouter",
+          "model": "google/gemma-3-27b-it",
+          "probability": 20
+        },
+        {
+          "provider": "openrouter",
+          "model": "qwen/qwen3-30b-a3b-instruct-2507",
+          "probability": 20
+        },
+        {
+          "provider": "openrouter",
+          "model": "deepseek/deepseek-v4-flash-0731",
+          "effort": "low",
+          "probability": 12
+        },
+        {
+          "provider": "openrouter",
+          "model": "openai/gpt-5-nano",
+          "effort": "minimal",
+          "probability": 7
+        },
+        {
+          "provider": "openrouter",
+          "model": "x-ai/grok-4.20",
+          "probability": 1
+        }
+      ]
+    }
+  ]
+}

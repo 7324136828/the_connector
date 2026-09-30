@@ -144,7 +144,10 @@ export function AgentToolsModal({ isOpen, onClose, activeSessionId }) {
       const response = await fetch('/api/agent/step', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tool: testTool, arguments: JSON.parse(testArgs) }),
+        body: JSON.stringify({
+          tool: testTool, arguments: JSON.parse(testArgs),
+          ...(testTool === 'fetch_memory' && activeSessionId ? { session_id: activeSessionId } : {}),
+        }),
       });
       setTestResult(await response.json());
     } catch (err) {

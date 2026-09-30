@@ -24,6 +24,7 @@ RESERVED_SKILL_NAMES = {
     "run_python_script",
     "install_python_package",
     "create_coding_skill_from_conversation",
+    "fetch_memory",
 }
 SKILL_TYPES = frozenset({"python", "cmd", "c++"})
 MAX_SKILL_CODE_BYTES = 100_000

@@ -86,15 +86,38 @@ def test_memory_disabled_excludes_all_context_and_disables_source_sharing(manage
     assert "9988" not in str(archive)
 
 
-def test_memory_scope_session_keeps_only_older_current_dialogue(manager):
+def test_legacy_session_scope_recalls_other_conversations_and_migrates_snapshot(manager):
     other = create(manager)
-    manager.add_message(other, "user", "Do not include this other conversation.")
+    manager.add_message(other, "user", "Recall this earlier conversation.")
     current = create(manager, memory_scope="session")
+    # Reproduce a persisted snapshot created before memory became shared.
+    with manager._get_conn() as conn:
+        conn.execute("UPDATE sessions SET config_json = ? WHERE id = ?", (
+            json.dumps(config(memory_scope="session")), current,
+        ))
     for content in ("older fact", "recent one", "recent two"):
         manager.add_message(current, "user", content)
     history, prompt, *_ = manager.get_context_window(current)
     assert [item["content"] for item in history] == ["recent one", "recent two"]
-    assert [item["content"] for item in archive_from(prompt)] == ["older fact"]
+    assert {item["content"] for item in archive_from(prompt)} == {
+        "Recall this earlier conversation.", "older fact",
+    }
+    assert manager.get_session(current).config["memory_scope"] == "all_sessions"
+    with manager._get_conn() as conn:
+        saved = conn.execute("SELECT config_json FROM sessions WHERE id = ?", (current,)).fetchone()
+    assert json.loads(saved["config_json"])["memory_scope"] == "all_sessions"
+
+
+def test_compatible_memory_recalls_sessions_with_legacy_scope(manager):
+    source = create(manager, user_session=True)
+    manager.add_message(source, "user", "An earlier user conversation.")
+    enriched = manager.config_with_memory(config(
+        memory_scope="session", memory_sources={"system_sessions": False, "completion_events": False},
+    ))
+    assert enriched["memory_scope"] == "all_sessions"
+    assert [entry["content"] for entry in archive_from(enriched["system_prompt"])] == [
+        "An earlier user conversation.",
+    ]
 
 
 def test_memory_sources_independently_filter_user_system_and_completion_records(manager):

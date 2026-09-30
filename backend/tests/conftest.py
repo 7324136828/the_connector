@@ -42,7 +42,7 @@ def isolate_api_database(monkeypatch, tmp_path):
     )
     monkeypatch.setattr(main, "skill_manager", skills)
     monkeypatch.setattr(main, "python_environment_manager", python_environments)
-    monkeypatch.setattr(main, "agent_service", AgentService(skills, python_environments))
+    monkeypatch.setattr(main, "agent_service", AgentService(skills, python_environments, manager))
     for module in (main, configurations, compatibility):
         monkeypatch.setattr(module, "configuration_manager", library)
     for module in (main, configuration_history):

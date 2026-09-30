@@ -95,7 +95,9 @@ def normalize_config(value: Any) -> dict:
     scope = config.get("memory_scope", "all_sessions")
     if scope not in ("all_sessions", "session"):
         raise ValueError("memory_scope must be 'all_sessions' or 'session'.")
-    config["memory_scope"] = scope
+    # Memory is shared across saved conversations. Accept the legacy session
+    # value so existing snapshots and uploaded examples continue to work.
+    config["memory_scope"] = "all_sessions"
     sources = config.get("memory_sources", {})
     if not isinstance(sources, dict):
         raise ValueError("memory_sources must be an object.")

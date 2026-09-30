@@ -44,6 +44,6 @@ Model IDs and reasoning options were verified against [OpenRouter's public model
 ### Cost controls and routing
 
 - Each choice inherits `retries: 0`, so a failed candidate is attempted once before trying the others. The Connector selects the first candidate randomly, then tries remaining choices in file order. Grok is last among fallback candidates unless it was randomly selected first.
-- Past Memory remains enabled. A four-message context window, four memory entries, and session-only memory reduce unrelated prompt history. System-session and sessionless completion archives are excluded.
+- Past Memory remains enabled and can recall user conversations across saved sessions. A four-message context window and four memory entries bound prompt history. System-session and completion memory are disabled in these examples; enable their source checkboxes when needed.
 - `agent_final_retries: 1` allows one additional attempt for an incomplete agent final response instead of the default five. Agent steps and tool calls can still generate additional requests.
 - The concise system prompt and low/minimal reasoning settings aim to reduce output usage. The schema has no output-token or dollar-budget field; weights control initial selection frequency, not spending percentages or final fallback frequency.

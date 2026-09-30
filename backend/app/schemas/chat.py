@@ -205,6 +205,7 @@ class AgentStepRequest(BaseModel):
     """Execute a single tool call directly."""
     tool: str
     arguments: Dict[str, Any]
+    session_id: Optional[str] = Field(default=None, min_length=1)
 
 
 class AgentStepResponse(BaseModel):

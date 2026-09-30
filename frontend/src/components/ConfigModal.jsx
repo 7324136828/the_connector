@@ -261,9 +261,7 @@ export function ConfigModal({ isOpen, onClose, onConfigSaved, config, models = [
                 ? 'Past memory is off.'
                 : !Object.values(memorySources).some(Boolean)
                   ? 'Past memory is on, but no persisted memory sources are selected.'
-                : configObject.memory_scope === 'session'
-                  ? 'Past memory includes saved messages from this session.'
-                  : `Past memory can load: ${[
+                : `Past memory can load across saved conversations: ${[
                       memorySources.user_sessions && 'user sessions',
                       memorySources.system_sessions && 'system sessions',
                       memorySources.completion_events && 'completion events',

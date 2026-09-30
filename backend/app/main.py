@@ -584,7 +584,7 @@ def run_agent(req: AgentRunRequest) -> AgentRunResponse:
 @app.post("/api/agent/step", response_model=AgentStepResponse)
 def step_agent(req: AgentStepRequest) -> AgentStepResponse:
     """Directly execute a single tool step."""
-    return agent_service.execute_tool(req.tool, req.arguments)
+    return agent_service.execute_tool(req.tool, req.arguments, session_id=req.session_id)
 
 
 # ==========================================

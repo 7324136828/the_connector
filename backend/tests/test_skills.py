@@ -43,6 +43,7 @@ def test_native_skills_are_registered():
         "run_python_script",
         "install_python_package",
         "create_coding_skill_from_conversation",
+        "fetch_memory",
     ]
 
 

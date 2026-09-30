@@ -3,7 +3,7 @@
   "past_memory": true,
   "context_window": 4,
   "memory_window": 4,
-  "memory_scope": "session",
+  "memory_scope": "all_sessions",
   "memory_sources": {
     "user_sessions": true,
     "system_sessions": false,

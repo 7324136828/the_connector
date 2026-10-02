@@ -1,0 +1,20 @@
+{
+  "id": "count_message",
+  "version": "1.0.0",
+  "ui": { "package": "@the-connector/count-message", "path": "ui", "entry": "ui/src/index.js", "lifecycle": ["mount", "update", "unmount"] },
+  "backend": { "package": "connector-count-message", "language": "python", "path": "backend", "entry": "count_message.server:main", "port": 8403 },
+  "webhook": { "method": "POST", "path": "/api/count_message" },
+  "tool": {
+    "description": "Count saved user and assistant text messages in all chats or one session.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "session_id": { "type": "string", "description": "Omit to count all saved chats" },
+        "include_system_sessions": { "type": "boolean", "default": false }
+      },
+      "additionalProperties": false
+    }
+  },
+  "permissions": ["connector-database:read"],
+  "launchers": { "windows": "run.bat", "unix": "run.sh" }
+}

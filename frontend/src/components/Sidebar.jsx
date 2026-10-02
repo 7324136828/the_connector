@@ -3,7 +3,7 @@
 export function Sidebar({
   isOpen, onClose,
   sessions, activeSessionId, onSelectSession, onNewSession, onCloseSession,
-  onOpenSettings, onOpenConfig, onOpenTools, onOpenLibrary, disabled,
+  onOpenSettings, onOpenConfig, onOpenTools, onOpenLibrary, onOpenPlugins, disabled,
 }) {
   return (
     <aside className={'sidebar' + (isOpen ? ' sidebar-open' : '')} aria-label="Chat sessions and settings">
@@ -59,6 +59,7 @@ export function Sidebar({
           <button className="config-button" onClick={onOpenLibrary} disabled={disabled}>Config Library</button>
           <button className="config-button" onClick={onOpenConfig} disabled={disabled}>Session Config</button>
           <button className="config-button" onClick={onOpenTools} disabled={disabled}>Agent Tools</button>
+          <button className="config-button" onClick={onOpenPlugins} disabled={disabled}>Plugins</button>
         </div>
       </div>
     </aside>

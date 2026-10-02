@@ -1,0 +1,14 @@
+{
+  "name": "@the-connector/count-message",
+  "version": "1.0.0",
+  "description": "Embeddable message-count microfrontend for The Connector",
+  "type": "module",
+  "exports": "./src/index.js",
+  "files": ["src", "index.html", "server.js"],
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test tests/*.test.js"
+  },
+  "engines": { "node": ">=18" },
+  "license": "Apache-2.0"
+}

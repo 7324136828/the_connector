@@ -63,6 +63,7 @@ class Settings(BaseSettings):
     db_path: Path = DEFAULT_DB_PATH
     agent_python_env_dir: Path = Path(tempfile.gettempdir()) / "the_connector_python"
     agent_python_envs_dir: Path = Path(tempfile.gettempdir()) / "the_connector_python_envs"
+    plugin_dir: Path = DATA_DIR / "plugins"
 
     # Response diagnostics live in system temp, independently of DB_PATH.
     response_logging_enabled: bool = True
@@ -80,6 +81,8 @@ class Settings(BaseSettings):
         # DATA_DIR remains a supported override; an explicit DB_PATH wins.
         if "db_path" not in self.model_fields_set:
             self.db_path = self.data_dir / "connector.db"
+        if "plugin_dir" not in self.model_fields_set:
+            self.plugin_dir = self.data_dir / "plugins"
         return self
 
     model_config = SettingsConfigDict(

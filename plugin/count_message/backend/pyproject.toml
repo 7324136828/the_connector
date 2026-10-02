@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "connector-count-message"
+version = "1.0.0"
+description = "Read-only message counts for The Connector"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+count-message = "count_message.server:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["count_message*"]

@@ -22,11 +22,12 @@ from backend.app.services.configuration_manager import ConfigurationManager
 from backend.app.services.skill_manager import SkillManager
 from backend.app.services.agent_service import AgentService
 from backend.app.services.python_environment_manager import PythonEnvironmentManager
+from backend.app.services.plugin_manager import PluginManager
 from backend.app.api import configurations, compatibility, configuration_history
 
 
 @pytest.fixture(autouse=True)
-def isolate_api_database(monkeypatch, tmp_path):
+def isolate_api_database(monkeypatch, tmp_path, request):
     monkeypatch.setattr(main.response_log_writer, "directory", tmp_path / "response-logs")
     manager = SessionManager(tmp_path / "sessions.db")
     monkeypatch.setattr(main.internal_audit_store, "db_path", manager.db_path)
@@ -43,6 +44,9 @@ def isolate_api_database(monkeypatch, tmp_path):
     monkeypatch.setattr(main, "skill_manager", skills)
     monkeypatch.setattr(main, "python_environment_manager", python_environments)
     monkeypatch.setattr(main, "agent_service", AgentService(skills, python_environments, manager))
+    plugins = PluginManager(tmp_path / "sessions.db", tmp_path / "plugins", lambda: main.agent_service)
+    monkeypatch.setattr(main, "plugin_manager", plugins)
+    request.addfinalizer(plugins.shutdown)
     for module in (main, configurations, compatibility):
         monkeypatch.setattr(module, "configuration_manager", library)
     for module in (main, configuration_history):

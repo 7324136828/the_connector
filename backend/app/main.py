@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from contextlib import asynccontextmanager
 from typing import Any, Dict, List, Optional
 
 from fastapi import Body, HTTPException, Query, Request, status
@@ -72,6 +73,20 @@ from .services.configuration_history import configuration_history_manager
 from .api.configurations import router as configurations_api
 from .api.configuration_history import router as configuration_history_api
 from .api.compatibility import router as compatibility_api, CompatibilityError, error_response
+from .api.plugins import router as plugins_api, PluginFrameCORSMiddleware
+from .services.plugin_manager import PluginManager
+from starlette.concurrency import run_in_threadpool
+
+plugin_manager = PluginManager(settings.db_path, settings.plugin_dir, lambda: agent_service)
+
+
+@asynccontextmanager
+async def lifespan(application):
+    await run_in_threadpool(plugin_manager.restore)
+    try:
+        yield
+    finally:
+        await run_in_threadpool(plugin_manager.shutdown)
 
 response_log_writer = ResponseLogWriter(
     settings.response_log_dir, enabled=settings.response_logging_enabled,
@@ -90,6 +105,7 @@ app = LoggedFastAPI(
     request_log_max_body_bytes=settings.request_log_max_body_bytes,
     internal_audit_store=internal_audit_store,
     title=settings.app_name,
+    lifespan=lifespan,
     version=settings.app_version,
     description="Full-stack multi-provider LLM connector with ChatGPT-like interface and agentic plugin support.",
 )
@@ -103,10 +119,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.add_middleware(RoutingLogContextMiddleware)
+app.add_middleware(PluginFrameCORSMiddleware)
 
 app.include_router(configurations_api)
 app.include_router(configuration_history_api)
 app.include_router(compatibility_api)
+app.include_router(plugins_api)
 
 
 @app.exception_handler(CompatibilityError)

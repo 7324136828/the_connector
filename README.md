@@ -2,6 +2,148 @@
 
 A React and FastAPI chat application connecting OpenAI, Claude, Gemini, OpenRouter, Ollama, and a local mock provider, with a required isolated Kokoro speech backend. Save named routing configurations and expose active entries as OpenAI-compatible models for Hermes or other agent clients. Web chat sessions retain their own `config.json` snapshots, including routing, effort, system prompt, and memory settings.
 
+## Install and manage plugins
+
+The Connector supports ZIP plugin installation from the sidebar's **Plugins**
+window. For the first plugin, choose the repository's **`plugin.zip`**, click
+**Enable** beside `count_message`, then click **Open UI**. The embedded counter
+follows the currently selected chat; without a selected chat it counts all web
+chats. Its own session field can also select another chat or the global count.
+The plugin also appears in **Agent Tools** and is callable as `count_message`.
+
+Installed plugins and their enabled settings persist in the Connector SQLite
+database. On normal startup, enabled plugins start automatically and register
+their tools again. **Disable** stops the backend and removes its managed tool;
+**Uninstall** also removes the package and its Python environment while keeping
+chat history. Connector shutdown stops managed plugin processes. A failed
+plugin displays an error without preventing chat or other plugins from running;
+use **Retry** after resolving the reported problem.
+
+The first installer supports **Python backends** and **browser-ready JavaScript
+ES modules**. Each backend runs from its extracted `backend/` sources in a
+dedicated virtual environment. Runtime dependencies declared in
+`backend/pyproject.toml` or `backend/requirements.txt` are installed into that
+environment on first enable. Dependencies can require network access. No host
+npm installation or manual webhook registration is needed: the Connector
+imports the plugin's `mount` interface in a sandboxed iframe and proxies its
+declared API endpoint. The UI must include bundled/browser-compatible modules;
+unbuilt JSX, TypeScript, and bare npm imports are not compiled by this installer.
+Java and C++ runtime installation is not implemented yet.
+
+Plugin files, environments, and `backend.log` are stored under
+`%TEMP%/the_connector/plugins/<plugin_id>` by default (the system temp directory
+on other platforms). `DATA_DIR` changes the default containing directory; an
+explicit `PLUGIN_DIR` in `.env` overrides it. As with the default chat database,
+system temp cleanup can remove these files. For long-term retention, choose a
+persistent `PLUGIN_DIR` and `DB_PATH` and back them up together.
+
+Plugins execute trusted code as the Connector's operating-system user. The
+virtual environment separates Python dependencies; it is not an operating
+system security sandbox. Manifest permissions describe the expected access,
+and the supported `connector-database:read` permission supplies the database
+path. It does not enforce read-only access on arbitrary plugin code. The
+installer rejects unsafe paths, symlinks, duplicate entries, corrupt archives,
+and oversized ZIPs (10 MiB compressed, 50 MiB extracted, at most 1,000 entries).
+Existing IDs cannot be overwritten; uninstall before installing another version.
+
+| Action | Endpoint |
+| --- | --- |
+| List installed plugins and runtime status | `GET /api/plugins` |
+| Upload a raw ZIP body | `POST /api/plugins/install` (`application/zip`) |
+| Enable/start and register tool | `POST /api/plugins/{id}/enable` |
+| Disable/stop and unregister managed tool | `POST /api/plugins/{id}/disable` |
+| Uninstall package | `DELETE /api/plugins/{id}` |
+| Hosted plugin interface | `GET /api/plugins/{id}/frame?session_id=...` |
+| Browser module/assets | `GET /api/plugins/{id}/assets/ui/...` |
+| Declared backend API and health | `GET`/`POST /api/plugins/{id}/proxy/...` |
+
+`plugin.json` identifies the package and the UI/backend entry points. Python
+entry points use `module:function`; the callable must accept command-line
+`--host` and `--port`, and `--db-path` when database access is declared, serve
+`GET /health` returning `{"status":"ok"}`, and accept JSON POSTs at the
+manifest's `webhook.path`. Connector assigns a free loopback port instead of
+the standalone `backend.port`. Optional `tool.description` and
+`tool.parameters` define the agent-facing tool. The plugin ID is its tool name;
+collisions with existing tools are rejected. The UI module exports
+`mount(container, options)` returning `unmount()`; options include `apiBaseUrl`
+for the Connector proxy and `sessionId`. The included `count_message` is a
+complete reference implementation.
+
+## Standalone plugins: `count_message`
+
+The first standalone plugin is **`count_message`**. It counts retained text
+messages exchanged between users and The Connector, reporting user messages,
+assistant messages, and their total across all web chats or one session. The
+implementation lives in [`plugin/count_message`](plugin/count_message), with
+complete usage instructions in [`instruction.md`](plugin/count_message/instruction.md).
+
+Each plugin is delivered as **`plugin.zip`**, with this layout at the archive
+root:
+
+```text
+plugin.zip
+├── instruction.md       # installation, usage, and integration instructions
+├── plugin.json          # plugin ID, version, packages, entries, and permissions
+├── ui/                  # standalone npm package with JavaScript interfaces
+│   ├── package.json
+│   ├── src/index.js     # microfrontend mount/update/unmount interface
+│   └── index.html       # standalone UI
+├── backend/             # installable backend module (Python for count_message)
+│   ├── pyproject.toml
+│   └── count_message/
+├── run.bat              # Windows: launch UI and backend
+├── run.sh               # Linux/macOS: launch UI and backend
+├── run.py               # portable launcher
+├── build_plugin.py      # rebuild the ZIP
+└── LICENSE
+```
+
+The packaging contract pairs a standalone **npm UI package** with an
+independently installable **Python, C++, or Java backend module**. Each plugin
+provides launch scripts appropriate to its supported platforms and documents
+its runtime, installation, API, and microfrontend interface. This first plugin
+uses Python; additional language implementations are not required in the same
+ZIP. The current Connector installer consumes `plugin.json` and supports the
+Python implementation of this contract.
+
+Extract this plugin into its own folder and run `run.bat` on Windows or
+`sh run.sh` on Linux/macOS. Python 3.10+ is required. Open
+**http://127.0.0.1:8403**; the launcher serves the JavaScript UI and Python backend
+together without third-party runtime dependencies. Start Connector at least
+once so its SQLite database exists. The plugin reads the database in read-only
+mode, using `DB_PATH`, `DATA_DIR`, or Connector's default temp location. If the
+Connector sets a custom path in `.env`, supply the same path with `--db-path`;
+the standalone plugin does not load the host `.env` automatically.
+
+Counts include nonblank `user` and `assistant` messages in active and closed
+web sessions. System sessions are excluded by default and can be included
+explicitly. System/tool messages, memory records, and stateless API completion
+records are excluded. Cleared history is no longer countable. The API supports
+`GET` and `POST /api/count_message`, with optional `session_id` and
+`include_system_sessions`, plus `GET /health` for database readiness.
+
+To install the modules separately, run `python -m pip install ./backend` from
+the extracted plugin folder and `npm install /path/to/extracted/ui` from the
+Connector frontend. The Python entry point is `count-message`; the npm package
+is `@the-connector/count-message`. Import its `mount` function into the host UI
+and call `update` when the selected session changes and `unmount` when removing
+it. The [instructions](plugin/count_message/instruction.md) include a React
+adapter and standalone npm preview commands.
+
+With Connector running, `run.bat --register http://127.0.0.1:8301` or
+`sh run.sh --register http://127.0.0.1:8301` installs the plugin as an agent
+webhook using the existing `/api/agent/register-tool` endpoint. Keep the plugin
+running; registration must be repeated after Connector restarts when using
+this manual standalone mode. npm installation alone does not add a UI panel.
+For automatic installation, UI hosting, and restart restoration, use the
+Connector's **Plugins** window described above.
+
+Rebuild the deliverable from the repository root:
+
+```sh
+python plugin/count_message/build_plugin.py --output plugin.zip
+```
+
 ## Run the backend only
 
 For Hermes or API clients, Node and the frontend are not required, but both the Connector API environment and the required Python 3.12 Kokoro environment must be installed. Run these commands from the repository directory.

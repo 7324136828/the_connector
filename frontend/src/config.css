@@ -96,6 +96,16 @@
 .venv-empty { color: var(--text-muted); text-align: center; padding: 18px; }
 .library-delete-confirm { border-top: 1px solid var(--border-subtle); padding-top: 12px; margin-top: 12px; font-size: .8rem; color: var(--text-muted); }
 .library-delete-confirm p { margin-bottom: 8px; }
+.plugins-dialog { width: min(960px, 95vw); }
+.plugins-description { color: var(--text-muted); line-height: 1.5; margin-bottom: 12px; }
+.plugins-list { display: flex; flex-direction: column; gap: 12px; margin-top: 16px; }
+.plugin-card { padding: 14px; border: 1px solid var(--border-subtle); border-radius: 8px; }
+.plugin-card span { color: var(--text-muted); font-size: .8rem; }
+.plugin-card .config-actions { margin-top: 12px; flex-wrap: wrap; }
+.plugin-card [role=alert] { color: #fca5a5; margin-top: 8px; overflow-wrap: anywhere; }
+.plugin-interface { margin-top: 20px; }
+.plugin-interface-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.plugin-interface iframe { width: 100%; height: 460px; border: 1px solid var(--border-subtle); border-radius: 8px; background: #121217; }
 @media (max-width: 520px) {
   .library-fields { grid-template-columns: 1fr; }
   .library-toolbar { flex-direction: column; align-items: stretch; }

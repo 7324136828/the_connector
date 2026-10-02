@@ -504,6 +504,11 @@ class AgentService:
             "kind": kind,
         }
 
+    def unregister_plugin_tool(self, name: str, handler=None) -> None:
+        entry = self._tools.get(name)
+        if entry and entry.get("kind") == "plugin" and (handler is None or entry.get("handler") is handler):
+            del self._tools[name]
+
     def create_coding_skill_from_conversation(
         self,
         conversation: str,

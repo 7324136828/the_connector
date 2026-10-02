@@ -8,6 +8,7 @@ import { ConfigLibrary } from './components/ConfigLibrary';
 import { AgentToolsModal } from './components/AgentToolsModal';
 import { PythonEnvironmentModal } from './components/PythonEnvironmentModal';
 import { ExportHistoryModal } from './components/ExportHistoryModal';
+import { PluginsModal } from './components/PluginsModal';
 import { visibleSessions } from './components/sessionHelpers';
 import {
   createNewSession, sendMessage, closeSession, getSessions, getSession,
@@ -35,6 +36,7 @@ export function App() {
   const [toolsModalOpen, setToolsModalOpen] = useState(false);
   const [pythonEnvironmentModalOpen, setPythonEnvironmentModalOpen] = useState(false);
   const [exportModalOpen, setExportModalOpen] = useState(false);
+  const [pluginsModalOpen, setPluginsModalOpen] = useState(false);
   const [pythonEnvironment, setPythonEnvironment] = useState(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [speechActor, setSpeechActor] = useState(() => {
@@ -283,6 +285,7 @@ export function App() {
         onOpenConfig={() => { setSidebarOpen(false); setConfigModalOpen(true); }}
         onOpenTools={() => { setSidebarOpen(false); setToolsModalOpen(true); }} disabled={busy}
         onOpenLibrary={() => { setSidebarOpen(false); setLibraryDraft(null); setLibraryOpen(true); }}
+        onOpenPlugins={() => { setSidebarOpen(false); setPluginsModalOpen(true); }}
       />
       {sidebarOpen && <button className="sidebar-backdrop" type="button" onClick={() => setSidebarOpen(false)} aria-label="Close navigation" />}
       <div className="chat-frame">
@@ -353,6 +356,7 @@ export function App() {
         isOpen={exportModalOpen} onClose={() => setExportModalOpen(false)}
         activeSessionId={activeSessionId} onClearAll={handleClearAllHistory}
       />
+      <PluginsModal isOpen={pluginsModalOpen} onClose={() => setPluginsModalOpen(false)} activeSessionId={activeSessionId} />
     </div>
   );
 }

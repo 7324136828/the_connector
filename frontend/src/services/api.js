@@ -1,6 +1,17 @@
 ﻿/** API calls use the configuration saved with each session. */
 const BASE_URL = '/api';
 
+export function getPlugins() { return request('/plugins'); }
+export function enablePlugin(id) { return request(`/plugins/${encodeURIComponent(id)}/enable`, { method: 'POST' }); }
+export function disablePlugin(id) { return request(`/plugins/${encodeURIComponent(id)}/disable`, { method: 'POST' }); }
+export function uninstallPlugin(id) { return request(`/plugins/${encodeURIComponent(id)}`, { method: 'DELETE' }); }
+export async function installPlugin(file) {
+  const response = await fetch(`${BASE_URL}/plugins/install`, { method: 'POST', headers: { 'Content-Type': 'application/zip' }, body: file });
+  const data = await response.json();
+  if (!response.ok) throw new Error(describeError(data.detail) || 'Plugin installation failed');
+  return data;
+}
+
 function describeError(detail) {
   if (typeof detail === 'string') return detail;
   if (Array.isArray(detail)) {

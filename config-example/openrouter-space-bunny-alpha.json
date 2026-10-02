@@ -14,7 +14,7 @@
     {
       "provider": "openrouter",
       "model": "stealth/space-bunny-alpha",
-      "retries": 0
+      "retries": 5
     }
   ]
 }

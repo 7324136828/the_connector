@@ -1,0 +1,4 @@
+interface:
+  display_name: "Create Connector Plugin"
+  short_description: "Build and package plugins for The Connector"
+  default_prompt: "Use $create-plugin to build a Connector plugin for the capability I describe and deliver a validated plugin.zip."

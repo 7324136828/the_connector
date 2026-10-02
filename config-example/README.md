@@ -47,3 +47,7 @@ Model IDs and reasoning options were verified against [OpenRouter's public model
 - Past Memory remains enabled and can recall user conversations across saved sessions. A four-message context window and four memory entries bound prompt history. System-session and completion memory are disabled in these examples; enable their source checkboxes when needed.
 - `agent_final_retries: 1` allows one additional attempt for an incomplete agent final response instead of the default five. Agent steps and tool calls can still generate additional requests.
 - The concise system prompt and low/minimal reasoning settings aim to reduce output usage. The schema has no output-token or dollar-budget field; weights control initial selection frequency, not spending percentages or final fallback frequency.
+
+## OpenRouter free-tier probability example
+
+Use [openrouter-free-tier-probabilistic.json](openrouter-free-tier-probabilistic.json) to rotate across the 16 supplied `:free` model IDs. Each choice has equal weight (`probability: 6.25`), totaling 100 across all 16 models, and no retries; on failure, the router moves through the remaining choices in file order. Free-tier model availability and limits are controlled by OpenRouter and may change.

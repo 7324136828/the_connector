@@ -1,0 +1,101 @@
+{
+  "system_prompt": "You are a helpful, accurate assistant. Prefer concise answers and expand when asked. Use tools when necessary to complete the user\u0027s request.",
+  "past_memory": true,
+  "context_window": 4,
+  "memory_window": 4,
+  "memory_scope": "all_sessions",
+  "memory_sources": {
+    "user_sessions": true,
+    "system_sessions": false,
+    "completion_events": false
+  },
+  "agent_final_retries": 1,
+  "sequences": [
+    {
+      "type": "probability",
+      "retries": 5,
+      "choices": [
+        {
+          "provider": "openrouter",
+          "model": "apodex/apodex-1.1-mini:free",
+          "probability": 7
+        },
+        {
+          "provider": "openrouter",
+          "model": "inclusionai/ling-3.0-flash-sante:free",
+          "probability": 7
+        },
+        {
+          "provider": "openrouter",
+          "model": "qwen/qwen3.8-27b:free",
+          "probability": 7
+        },
+        {
+          "provider": "openrouter",
+          "model": "dots-studio/dots-3-note-preview:free",
+          "probability": 7
+        },
+        {
+          "provider": "openrouter",
+          "model": "liquid/lfm-2.5-2.6b:free",
+          "probability": 6
+        },
+        {
+          "provider": "openrouter",
+          "model": "nvidia/nemotron-3.5-lightning:free",
+          "probability": 6
+        },
+        {
+          "provider": "openrouter",
+          "model": "thinkingmachines/inkling-small:free",
+          "probability": 6
+        },
+        {
+          "provider": "openrouter",
+          "model": "poolside/laguna-s-2.1:free",
+          "probability": 6
+        },
+        {
+          "provider": "openrouter",
+          "model": "thinkingmachines/inkling:free",
+          "probability": 6
+        },
+        {
+          "provider": "openrouter",
+          "model": "poolside/laguna-xs-2.1:free",
+          "probability": 6
+        },
+        {
+          "provider": "openrouter",
+          "model": "cohere/north-mini-code:free",
+          "probability": 6
+        },
+        {
+          "provider": "openrouter",
+          "model": "nvidia/nemotron-3-ultra-550b-a55b:free",
+          "probability": 6
+        },
+        {
+          "provider": "openrouter",
+          "model": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
+          "probability": 6
+        },
+        {
+          "provider": "openrouter",
+          "model": "google/gemma-4-26b-a4b-it:free",
+          "probability": 6
+        },
+        {
+          "provider": "openrouter",
+          "model": "google/gemma-4-31b-it:free",
+          "probability": 6
+        },
+        {
+          "provider": "openrouter",
+          "model": "nvidia/nemotron-3-super-120b-a12b:free",
+          "probability": 6
+        }
+      ]
+    }
+  ]
+}

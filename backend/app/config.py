@@ -66,6 +66,7 @@ class Settings(BaseSettings):
     plugin_dir: Path = DATA_DIR / "plugins"
 
     # Response diagnostics live in system temp, independently of DB_PATH.
+    completion_no_database_access: bool = False
     response_logging_enabled: bool = True
     response_log_dir: Path = DATA_DIR / "logs"
     response_log_max_bytes: int = Field(default=10 * 1024 * 1024, ge=1024)

@@ -10,6 +10,7 @@ from openai import OpenAI
 from backend.app import main
 from backend.app.api import compatibility
 from backend.app.services.connectors.common import ChatAPIError
+from backend.app.services.configuration_manager import ConfigurationManager
 
 client = TestClient(main.app)
 MOCK = {"sequences": [{"provider": "mock", "model": "mock-assistant", "retries": 0}]}
@@ -127,6 +128,100 @@ def test_completion_response_is_saved_without_the_request_and_reused_as_memory(m
     assert first.json()["choices"][0]["message"]["content"] in captured["system_prompt"]
     with sqlite3.connect(main.session_manager.db_path) as conn:
         assert conn.execute("SELECT COUNT(*) FROM completions_response").fetchone()[0] == 2
+
+
+@pytest.fixture
+def database_free_completions(monkeypatch):
+    monkeypatch.setattr(compatibility.settings, "completion_no_database_access", True)
+    library = ConfigurationManager(main.configuration_manager.db_path)
+    from backend.app.api import configurations
+    for module in (main, compatibility, configurations):
+        monkeypatch.setattr(module, "configuration_manager", library)
+    return library
+
+
+@pytest.mark.parametrize("path", ["/v1/chat/completions", "/api/v1/chat/completions",
+                                  "/api/chat/completions", "/chat/completions"])
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("file_logging", [False, True])
+def test_database_free_completions_never_connect_to_sqlite(
+    monkeypatch, database_free_completions, path, stream, file_logging,
+):
+    register(config={**MOCK, "past_memory": True, "system_prompt": "Keep this prompt"})
+    monkeypatch.setattr(main.response_log_writer, "enabled", file_logging)
+    connections = []
+
+    def forbidden_connect(*args, **kwargs):
+        connections.append(args)
+        raise AssertionError("Completion attempted database access")
+
+    def forbidden_memory(*args, **kwargs):
+        raise AssertionError("Completion attempted saved memory access")
+
+    monkeypatch.setattr(sqlite3, "connect", forbidden_connect)
+    monkeypatch.setattr(main.session_manager, "config_with_memory", forbidden_memory)
+    monkeypatch.setattr(main.session_manager, "record_completion_response", forbidden_memory)
+    payload = {"model": "research-router", "messages": [{"role": "user", "content": "Hello"}],
+               "stream": stream, "tools": TOOLS, "tool_choice": "required"}
+    response = client.post(path, json=payload)
+    assert response.status_code == 200, response.text
+    if stream:
+        assert "data: [DONE]" in response.text and '"tool_calls"' in response.text
+    else:
+        assert response.json()["choices"][0]["finish_reason"] == "tool_calls"
+    # Unknown models and invalid requests also must not write an audit record.
+    assert client.post(path, json={**payload, "model": "missing"}).status_code == 404
+    assert client.post(path, json={**payload, "messages": []}).status_code == 400
+    assert connections == []
+    if file_logging and path == "/api/chat/completions":
+        assert (main.response_log_writer.directory / "post_api_chat_completions.jsonl").is_file()
+
+
+def test_database_free_completion_succeeds_with_exclusively_locked_database(database_free_completions):
+    register()
+    connection = sqlite3.connect(main.session_manager.db_path)
+    try:
+        connection.execute("BEGIN EXCLUSIVE")
+        response = client.post("/api/chat/completions", json={
+            "model": "research-router", "messages": [{"role": "user", "content": "Hello"}],
+        })
+        assert response.status_code == 200, response.text
+        assert response.json()["choices"][0]["message"]["content"] == "Mock completion: Hello"
+    finally:
+        connection.rollback()
+        connection.close()
+
+
+def test_database_free_routing_cache_tracks_configuration_changes(database_free_completions):
+    library = database_free_completions
+    record = register()
+    assert library.get_active_model("research-router")["id"] == record["id"]
+    # Callers cannot mutate the cached snapshot.
+    library.get_active_model("research-router")["config"]["system_prompt"] = "Mutated"
+    assert library.get_active_model("research-router")["config"]["system_prompt"] != "Mutated"
+    assert client.patch("/api/configs/" + record["id"], json={"active": False}).status_code == 200
+    assert library.get_active_model("research-router") is None
+    assert client.patch("/api/configs/" + record["id"], json={
+        "active": True, "name": "Updated routing", "config": {**MOCK, "system_prompt": "Updated"},
+    }).status_code == 200
+    assert library.get_active_model("research-router")["config"]["system_prompt"] == "Updated"
+    assert library.get_active_model("research-router")["name"] == "Updated routing"
+    assert client.delete("/api/configs/" + record["id"]).status_code == 204
+    assert library.get_active_model("research-router") is None
+
+
+def test_database_free_cache_loads_saved_routes_at_startup(monkeypatch):
+    saved = register()
+    register("inactive", active=False)
+    monkeypatch.setattr(compatibility.settings, "completion_no_database_access", True)
+    library = ConfigurationManager(main.configuration_manager.db_path)
+
+    def forbidden_connect(*args, **kwargs):
+        raise AssertionError("Cached route lookup attempted database access")
+
+    monkeypatch.setattr(library, "_get_conn", forbidden_connect)
+    assert library.get_active_model("research-router")["id"] == saved["id"]
+    assert library.get_active_model("inactive") is None
 
 
 def test_tool_call_round_trip_and_stream_wire_format():

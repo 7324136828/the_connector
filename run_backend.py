@@ -13,6 +13,8 @@ def main() -> None:
     parser.add_argument("--host", default="127.0.0.1", help="Bind address (default: 127.0.0.1)")
     parser.add_argument("--port", type=int, default=8301, help="Listen port (default: 8301)")
     parser.add_argument("--reload", action="store_true", help="Reload on backend code changes during development")
+    parser.add_argument("--completion-no-database-access", action="store_true",
+                        help="Serve completions without database access, saved memory, or response persistence")
     args = parser.parse_args()
     if not 1 <= args.port <= 65535:
         parser.error("--port must be between 1 and 65535")
@@ -25,6 +27,8 @@ def main() -> None:
     os.chdir(ROOT)
     # Connectors read os.environ; Pydantic's env_file alone does not populate it.
     load_dotenv(ROOT / ".env", override=False)
+    if args.completion_no_database_access:
+        os.environ["COMPLETION_NO_DATABASE_ACCESS"] = "true"
     print(f"The Connector backend: http://{args.host}:{args.port}", flush=True)
     print(f"API docs: http://{args.host}:{args.port}/docs", flush=True)
     print("Press Ctrl+C to stop. Frontend is not started.", flush=True)

@@ -66,7 +66,7 @@ def openrouter_chat(
             "temperature": temperature,
         }
         if max_output_tokens > 0:
-            options["max_tokens"] = max_output_tokens
+            options["max_completion_tokens"] = max_output_tokens
         if effort is not None:
             options.pop("temperature", None)
             options["extra_body"] = {"reasoning": {"effort": effort}}
@@ -90,7 +90,7 @@ def openrouter_chat(
         "temperature": temperature,
     }
     if max_output_tokens > 0:
-        payload["max_tokens"] = max_output_tokens
+        payload["max_completion_tokens"] = max_output_tokens
     if effort is not None:
         payload.pop("temperature", None)
         payload["reasoning"] = {"effort": effort}

@@ -1,6 +1,6 @@
 import { afterEach, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { getConfigRoutes, setAgentFinalRetries, setMemorySource, setRouteEffort, suggestedModelId } from '../src/components/configHelpers.js';
+import { getConfigRoutes, setAgentFinalRetries, setGrossTokenLimit, setMemorySource, setRouteEffort, setRouteTokenLimit, suggestedModelId } from '../src/components/configHelpers.js';
 import { createNewSession, sendMessage, runAgent, updateSessionConfig, validateConfig, createLibraryConfig, updateLibraryConfig, deleteLibraryConfig, getLibraryConfigDownloadUrl, getModels, getConfigHistory, getConfigHistoryDownloadUrl, loadConfigFile, recordConfigLoad, getPythonEnvironments, createPythonEnvironment, selectPythonEnvironment, getExportZipUrl, getAllHistoryExportUrl, clearAllHistory } from '../src/services/api.js';
 import { visibleSessions } from '../src/components/sessionHelpers.js';
 
@@ -34,6 +34,100 @@ test('incomplete or invalid JSON structures do not crash route controls', () => 
   for (const config of [null, [], {}, { sequences: null }, { sequences: [null, 3, {}, { choices: [null] }] }]) {
     assert.deepEqual(getConfigRoutes(config), []);
   }
+});
+
+test('model token limits update direct routes and probability choices independently', () => {
+  const config = {
+    context_window: 12,
+    sequences: [
+      { provider: 'mock', model: 'mock-assistant', effort: 'low', max_input_tokens: 10000 },
+      { type: 'probability', retries: 2, choices: [
+        { provider: 'openai', model: 'gpt-5', probability: 70, max_output_tokens: 4000 },
+        { provider: 'gemini', model: 'gemini-2.5-flash', probability: 30 },
+      ] },
+    ],
+  };
+  const routes = getConfigRoutes(config);
+  const updatedInput = setRouteTokenLimit(config, routes[0].path, 'max_input_tokens', 24000);
+  const updated = setRouteTokenLimit(updatedInput, routes[1].path, 'max_output_tokens', 2000);
+  assert.equal(updated.sequences[0].max_input_tokens, 24000);
+  assert.equal(updated.sequences[0].effort, 'low');
+  assert.equal(updated.sequences[1].choices[0].max_output_tokens, 2000);
+  assert.equal(updated.sequences[1].choices[0].probability, 70);
+  assert.deepEqual(updated.sequences[1].choices[1], config.sequences[1].choices[1]);
+  assert.equal(updated.sequences[1].retries, 2);
+  assert.equal(updated.context_window, 12);
+  assert.equal(config.sequences[0].max_input_tokens, 10000);
+  assert.equal(config.sequences[1].choices[0].max_output_tokens, 4000);
+  const cleared = setRouteTokenLimit(updated, routes[1].path, 'max_output_tokens', '');
+  assert.equal(Object.hasOwn(cleared.sequences[1].choices[0], 'max_output_tokens'), false);
+  assert.equal(cleared.sequences[0].max_input_tokens, 24000);
+});
+
+test('model token limit controls reject invalid numbers and unrelated fields', () => {
+  const config = { sequences: [{ provider: 'mock', model: 'mock-assistant' }] };
+  const path = getConfigRoutes(config)[0].path;
+  for (const value of [0, -1, 1.5, Infinity, NaN, 1000000001, Number.MAX_SAFE_INTEGER + 1, '1000', null, true]) {
+    assert.throws(() => setRouteTokenLimit(config, path, 'max_input_tokens', value), /positive whole numbers/);
+  }
+  assert.equal(setRouteTokenLimit(config, path, 'max_output_tokens', 1).sequences[0].max_output_tokens, 1);
+  assert.equal(setRouteTokenLimit(config, path, 'max_input_tokens', 1000000000).sequences[0].max_input_tokens, 1000000000);
+  assert.throws(() => setRouteTokenLimit(config, path, 'context_window', 10), /Unknown model token limit/);
+  assert.deepEqual(config.sequences[0], { provider: 'mock', model: 'mock-assistant' });
+});
+
+test('configuration token limits are top-level and clearing removes only the chosen cap', () => {
+  const config = {
+    gross_max_input_token: 100000,
+    context_window: 10,
+    sequences: [{ provider: 'mock', model: 'mock-assistant', max_input_tokens: 40000 }],
+  };
+  const updated = setGrossTokenLimit(config, 'gross_max_output_token', 10000);
+  assert.equal(updated.gross_max_input_token, 100000);
+  assert.equal(updated.gross_max_output_token, 10000);
+  assert.equal(config.gross_max_output_token, undefined);
+  assert.deepEqual(updated.sequences, config.sequences);
+  assert.equal(updated.context_window, 10);
+  const cleared = setGrossTokenLimit(updated, 'gross_max_input_token', '');
+  assert.equal(Object.hasOwn(cleared, 'gross_max_input_token'), false);
+  assert.equal(cleared.gross_max_output_token, 10000);
+  assert.deepEqual(cleared.sequences, config.sequences);
+  assert.equal(updated.gross_max_input_token, 100000);
+});
+
+test('configuration token limit controls validate positive bounded integers', () => {
+  const config = { sequences: [{ provider: 'mock', model: 'mock-assistant' }] };
+  for (const value of [0, -1, 1.5, Infinity, NaN, 1000000001, Number.MAX_SAFE_INTEGER + 1, '1000', null, true]) {
+    assert.throws(() => setGrossTokenLimit(config, 'gross_max_input_token', value), /positive whole numbers/);
+  }
+  assert.equal(setGrossTokenLimit(config, 'gross_max_input_token', 1).gross_max_input_token, 1);
+  assert.equal(setGrossTokenLimit(config, 'gross_max_output_token', 1000000000).gross_max_output_token, 1000000000);
+  assert.throws(() => setGrossTokenLimit(config, 'max_input_tokens', 10), /Unknown configuration token limit/);
+  assert.deepEqual(config, { sequences: [{ provider: 'mock', model: 'mock-assistant' }] });
+});
+
+test('singular model token aliases can be read, changed, and cleared without restoring a hidden cap', () => {
+  const config = { sequences: [{ choices: [
+    { provider: 'openai', model: 'gpt-5', max_input_token: 20000, max_output_token: 1000 },
+    { provider: 'mock', model: 'mock-assistant', max_input_token: 30000 },
+  ] }] };
+  const route = getConfigRoutes(config)[0];
+  assert.equal(route.max_input_tokens, 20000);
+  assert.equal(route.max_output_tokens, 1000);
+  const changed = setRouteTokenLimit(config, route.path, 'max_input_tokens', 12000);
+  assert.equal(changed.sequences[0].choices[0].max_input_tokens, 12000);
+  assert.equal(Object.hasOwn(changed.sequences[0].choices[0], 'max_input_token'), false);
+  assert.equal(changed.sequences[0].choices[0].max_output_token, 1000);
+  assert.deepEqual(changed.sequences[0].choices[1], config.sequences[0].choices[1]);
+  const cleared = setRouteTokenLimit(changed, route.path, 'max_output_tokens', '');
+  assert.equal(Object.hasOwn(cleared.sequences[0].choices[0], 'max_output_token'), false);
+  assert.equal(Object.hasOwn(cleared.sequences[0].choices[0], 'max_output_tokens'), false);
+  assert.equal(getConfigRoutes(cleared)[0].max_output_tokens, undefined);
+  const conflicting = { sequences: [{ provider: 'mock', model: 'mock-assistant', max_input_tokens: 2000, max_input_token: 1000 }] };
+  assert.equal(getConfigRoutes(conflicting)[0].max_input_tokens, 2000);
+  const clearedConflict = setRouteTokenLimit(conflicting, getConfigRoutes(conflicting)[0].path, 'max_input_tokens', '');
+  assert.equal(getConfigRoutes(clearedConflict)[0].max_input_tokens, undefined);
+  assert.equal(config.sequences[0].choices[0].max_input_token, 20000);
 });
 
 test('sessions carry configuration and messages cannot inject model or memory overrides', async () => {

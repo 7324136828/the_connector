@@ -16,6 +16,7 @@ import anyio
 from fastapi import FastAPI
 
 from .audit_context import start_audit_context, get_audit_context, finish_audit_context
+from .config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -155,6 +156,12 @@ class ResponseLoggingMiddleware:
     async def __call__(self, scope, receive, send):
         match = _route_match(scope.get("method", ""), scope.get("path", ""))
         database_enabled = self.audit_store is not None and self.audit_store.enabled
+        if (settings.completion_no_database_access and scope.get("method") == "POST"
+                and scope.get("path", "").rstrip("/") in {
+                    "/v1/chat/completions", "/api/v1/chat/completions",
+                    "/api/chat/completions", "/chat/completions",
+                }):
+            database_enabled = False
         if scope["type"] != "http" or not (self.writer.enabled or database_enabled) or match is None:
             return await self.app(scope, receive, send)
 

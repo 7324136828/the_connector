@@ -3,8 +3,10 @@
 import json
 import sqlite3
 import uuid
+from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
+from threading import RLock
 
 from ..config import settings
 from ..schemas.library import ConfigurationCreate, ConfigurationUpdate
@@ -17,6 +19,10 @@ class DuplicateModelIdError(ValueError):
 
 class ConfigurationNotFoundError(ValueError):
     """The requested saved configuration does not exist."""
+
+
+class AmbiguousConfigurationNameError(ValueError):
+    """Multiple saved configurations have the requested display name."""
 
 
 class ConfigurationManager:
@@ -41,6 +47,13 @@ class ConfigurationManager:
             if "context_length" not in columns:
                 conn.execute("ALTER TABLE configurations ADD COLUMN context_length INTEGER CHECK (context_length > 0)")
         self.configuration_history = ConfigurationHistoryManager(self.db_path)
+        # Load routing once at startup; completions can then avoid SQLite entirely.
+        # Configuration management still persists changes and keeps this cache current.
+        self._completion_cache_lock = RLock()
+        self._completion_models = (
+            {record["id"]: record for record in self.list_configs(active_only=True)}
+            if settings.completion_no_database_access else None
+        )
 
     def _get_conn(self) -> sqlite3.Connection:
         conn = sqlite3.connect(str(self.db_path))
@@ -69,13 +82,40 @@ class ConfigurationManager:
             ).fetchone()
         return self._record(row) if row is not None else None
 
+    def get_config_by_name(self, name: str) -> dict | None:
+        """Look up an exact saved display name, including inactive entries."""
+        with self._get_conn() as conn:
+            rows = conn.execute(
+                "SELECT * FROM configurations WHERE name = ? "
+                "ORDER BY created_at, id LIMIT 2", (name,),
+            ).fetchall()
+        if len(rows) > 1:
+            raise AmbiguousConfigurationNameError(
+                f"Multiple saved configurations are named '{name}'."
+            )
+        return self._record(rows[0]) if rows else None
+
     def get_active_model(self, model_id: str) -> dict | None:
+        if self._completion_models is not None:
+            with self._completion_cache_lock:
+                record = next((r for r in self._completion_models.values()
+                               if r["model_id"] == model_id), None)
+                return deepcopy(record)
         with self._get_conn() as conn:
             row = conn.execute(
                 "SELECT * FROM configurations WHERE model_id = ? AND active = 1",
                 (model_id,),
             ).fetchone()
         return self._record(row) if row is not None else None
+
+    def _cache_completion_record(self, record: dict) -> dict:
+        if self._completion_models is not None:
+            with self._completion_cache_lock:
+                if record["active"]:
+                    self._completion_models[record["id"]] = deepcopy(record)
+                else:
+                    self._completion_models.pop(record["id"], None)
+        return record
 
     def create_config(
         self, name: str, model_id: str, config: dict,
@@ -111,7 +151,7 @@ class ConfigurationManager:
                     f"Model ID '{request.model_id}' already exists."
                 ) from exc
             raise
-        return self._record(row)
+        return self._cache_completion_record(self._record(row))
 
     def update_config(self, config_id: str, **changes) -> dict:
         request = ConfigurationUpdate(**changes)
@@ -156,11 +196,14 @@ class ConfigurationManager:
                         values["config"], name=row["name"], source="library", conn=conn,
                         reference_key=f"library:{config_id}",
                     )
-        return self._record(row)
+        return self._cache_completion_record(self._record(row))
 
     def delete_config(self, config_id: str) -> bool:
         with self._get_conn() as conn:
             result = conn.execute("DELETE FROM configurations WHERE id = ?", (config_id,))
+        if self._completion_models is not None:
+            with self._completion_cache_lock:
+                self._completion_models.pop(config_id, None)
         return result.rowcount > 0
 
 

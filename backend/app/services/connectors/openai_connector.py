@@ -72,8 +72,10 @@ def openai_chat(
     elif temperature is not None:
         request_options["temperature"] = temperature
 
-    if max_output_tokens != -1:
-        request_options["max_completion_tokens" if effort is not None else "max_tokens"] = max_output_tokens
+    if max_output_tokens > 0:
+        # This parameter supports reasoning models even when the model has no
+        # registered effort control. It includes reasoning and visible output.
+        request_options["max_completion_tokens"] = max_output_tokens
 
     try:
         chat = getattr(client, "chat")

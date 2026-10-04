@@ -11,6 +11,7 @@ from ..config import settings
 from ..audit_context import record_route_attempt
 from ..routing_logging import log_probability_choice
 from ..schemas.configuration import normalize_config
+from .model_limits import InputContextLimitError, ensure_input_limit, effective_token_limit
 from .connectors import (
     ChatAPIError,
     capture_token_usage,
@@ -64,7 +65,8 @@ class Router:
         m = model.strip()
 
         if p == "mock" or p == "demo":
-            return mock_chat(model=m, messages=messages, system_prompt=system_prompt)
+            return mock_chat(model=m, messages=messages, system_prompt=system_prompt,
+                             max_output_tokens=max_output_tokens)
 
         elif p == "openai":
             if self._openai_client is None:
@@ -156,6 +158,7 @@ class Router:
         started = time.perf_counter()
         attempts = []
         last_error = None
+        provider_attempted = False
         for step in config["sequences"]:
             routing_type = "sequence_step"
             if step.get("type") == "probability":
@@ -167,16 +170,29 @@ class Router:
             else:
                 candidates = [step]
             for route in candidates:
+                try:
+                    ensure_input_limit(route, messages, system_prompt, config=config)
+                except InputContextLimitError as exc:
+                    last_error = exc
+                    attempts.append({"provider": route["provider"], "model": route["model"],
+                                     "effort": route.get("effort"), "attempt": 0,
+                                     "status": "context_limit", "error": str(exc)})
+                    record_route_attempt(route["provider"], route["model"], route.get("effort"),
+                                         "context_limit", attempt=0,
+                                         error_type=type(exc).__name__, routing_type=routing_type)
+                    continue
                 for attempt in range(route["retries"] + 1):
                     attempt_started = time.perf_counter()
                     info = {"provider": route["provider"], "model": route["model"],
                             "effort": route.get("effort"), "attempt": attempt + 1}
                     with capture_token_usage() as usage:
                         try:
+                            provider_attempted = True
                             content = self._execute_single_provider(
                                 provider=route["provider"], model=route["model"],
                                 effort=route.get("effort"), messages=messages,
                                 system_prompt=system_prompt, timeout=timeout,
+                                max_output_tokens=effective_token_limit(route, "output", config) or -1,
                             )
                             attempts.append({**info, "status": "success"})
                             input_tokens = usage.input_tokens if usage.input_tokens is not None else estimate_tokens(system_prompt + "\n".join(m["content"] for m in messages))
@@ -206,6 +222,8 @@ class Router:
                             if attempt < route["retries"]:
                                 time.sleep(0.5)
         # Never silently introduce a provider (including mock) absent from config.
+        if not provider_attempted and isinstance(last_error, InputContextLimitError):
+            raise last_error
         raise ChatAPIError(f"All configured routes failed. Last error: {last_error}")
 
 

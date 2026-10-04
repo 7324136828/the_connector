@@ -198,6 +198,16 @@ python run_backend.py --host 127.0.0.1 --port 8401 --reload
 
 `--reload` is for backend development. Changing the port also requires updating client base URLs.
 
+To avoid database access during compatible completion requests, launch with:
+
+```powershell
+.\run_backend.bat --completion-no-database-access
+# Or start the full local stack:
+.\run_default.bat --completion-no-database-access
+```
+
+You can also set `COMPLETION_NO_DATABASE_ACCESS=true` in `.env`. In this mode, all four chat completion aliases use routing configurations cached at startup, skip saved memory and daily summary refreshes, and skip both `completions_response` persistence and internal database auditing, including streamed responses and failed requests. Configuration changes made through this backend update the cache; changes made by another process require a restart. Startup, configuration management, model discovery, and ordinary session/agent chat still use the database. JSONL request/response file logging remains controlled by `RESPONSE_LOGGING_ENABLED`.
+
 ### Database location
 
 Sessions, conversation memory, saved configurations, and configuration history share a SQLite database in the system temp directory. On Windows the default is **`%TEMP%\the_connector\connector.db`**; on other systems it is `tempfile.gettempdir()/the_connector/connector.db`. The folder and filename stay the same across restarts; this is separate from the disposable per-session export folders.
@@ -465,6 +475,43 @@ To obtain a starting file, run `curl --fail-with-body -sS -o config.json http://
 Sessions use only their saved configuration. The backend does not load the repository's root `config.json` when creating or running a session. Provider credentials remain in the server environment; they are not configuration fields.
 
 Routing steps run in order. A probability group selects its first candidate by relative weight, then tries the other configured choices if needed. Each route can retry before moving on. A failure across all configured routes returns an error; a mock response is available only when a mock route is explicitly configured.
+
+In **Session Config** or the **Configuration library** editor, use **Model limits and effort** to set an optional **Input limit** and **Output limit** in tokens for each model, including each probability choice. Clear a field to omit that model cap; a provided configuration-wide cap still applies. The values are saved in that route as `max_input_tokens` and `max_output_tokens`, so uploaded/downloaded configurations and session snapshots preserve them:
+
+```json
+{
+  "provider": "openai",
+  "model": "gpt-5-nano",
+  "max_input_tokens": 32000,
+  "max_output_tokens": 4096,
+  "retries": 1
+}
+```
+
+Set top-level `gross_max_input_token` and `gross_max_output_token` to cap every model request in a configuration:
+
+```json
+{
+  "context_window": 10,
+  "memory_scope": "all_sessions",
+  "memory_window": 20,
+  "past_memory": true,
+  "gross_max_input_token": 100000,
+  "gross_max_output_token": 10000,
+  "sequences": [
+    {"model": "gpt-5-nano", "provider": "openai", "retries": 2, "effort": "minimal"}
+  ],
+  "system_prompt": "You are a helpful, precise, and thoughtful AI assistant."
+}
+```
+
+The editor's **Configuration token limits** controls write these top-level fields. For each input/output budget, the effective cap is the smallest **provided** configuration-wide, per-model, and (for output) client-request limit. Omitted or null configuration/model limits are treated as unlimited and excluded from comparisons; no finite default is added to the configuration. These caps apply to each request, including fallbacks and agent steps, rather than accumulated usage across requests. Provider capacity and required API defaults still apply. Per-model `max_input_token` and `max_output_token` are also accepted and normalized to the existing plural `max_input_tokens` and `max_output_tokens` fields; conflicting spellings are rejected.
+
+Get the saved configuration JSON by its display name with **`GET /api/configuration/detail/{configuration-name}`**, for example `/api/configuration/detail/My%20assistant`. The response is the configuration object itself, including these limits. Inactive configurations can also be inspected. A missing name returns 404; duplicate names return 409, so rename the configurations or use the existing `/api/configs/{config_id}` endpoint to identify a specific record. URL-encode names containing spaces or other special characters.
+
+The input limit checks an estimate of the complete request, including system/memory instructions, conversation messages, tool results, and tool schemas. Oversized routes are skipped without retries; another configured route can accept the unchanged request. If every route is too small, the API returns an input-limit error (HTTP 400, `context_length_exceeded` for compatible completions). Input is never silently trimmed. This estimate does not use the provider's exact tokenizer or increase the model's actual capacity.
+
+The output limit caps the provider's generated-token budget for that route in web chat, agent runs, and compatible completions. A compatible client's smaller `max_tokens` or `max_completion_tokens` still wins. Reasoning can consume part of the generated-token budget, so the setting does not guarantee that many visible answer tokens. The existing `context_window` counts recent messages; the library's advertised `context_length` describes capacity to API clients. Neither replaces these per-model limits.
 
 Each probability selection also emits an INFO message in the backend console, for example `INFO:     127.0.0.1:54321 --- probabilistic chooser chose model gpt-5-nano (provider=openai)`. This logs the initial random choice once per probability group reached, before retries or fallbacks, for both session/agent chat and compatibility completions. It is independent of file logging and database auditing; calls outside an HTTP request show `unknown` as the client address.
 

@@ -11,11 +11,12 @@ import pytest
 from backend.app.services.connectors import (
     claude_connector,
     gemini_connector,
+    mock_connector,
     ollama_connector,
     openai_connector,
     openrouter_connector,
 )
-from backend.app.services.connectors.common import capture_token_usage
+from backend.app.services.connectors.common import capture_token_usage, estimate_tokens
 
 
 MESSAGES = [
@@ -108,15 +109,16 @@ def test_openai_responses_fallback_preserves_effort_context_and_token_limit(sele
     assert (usage.input_tokens, usage.output_tokens) == (23, 4)
 
 
-def test_openai_non_reasoning_model_keeps_temperature_and_standard_limit():
+@pytest.mark.parametrize("model", ["gpt-4o-mini", "o1-preview", "gpt-future"])
+def test_openai_output_limit_does_not_depend_on_registered_effort(model):
     client, create = completion_client()
     openai_connector.openai_chat(
-        client, model="gpt-4o-mini", messages=MESSAGES, temperature=0.2, max_output_tokens=256,
+        client, model=model, messages=MESSAGES, temperature=0.2, max_output_tokens=256,
     )
     options = create.call_args.kwargs
     assert options["temperature"] == 0.2
-    assert options["max_tokens"] == 256
-    assert "max_completion_tokens" not in options
+    assert options["max_completion_tokens"] == 256
+    assert "max_tokens" not in options
     assert "reasoning_effort" not in options
 
 
@@ -126,6 +128,81 @@ def test_openai_omits_unspecified_temperature_for_unclassified_model():
     options = create.call_args.kwargs
     assert "temperature" not in options
     assert "reasoning_effort" not in options
+    assert "max_tokens" not in options
+    assert "max_completion_tokens" not in options
+
+
+def test_openai_responses_fallback_omits_unspecified_output_limit():
+    client, create = completion_client()
+    create.side_effect = RuntimeError("This model requires the Responses API")
+    responses_create = Mock(return_value=SimpleNamespace(output_text="42."))
+    client.responses = SimpleNamespace(create=responses_create)
+    openai_connector.openai_chat(client, model="gpt-5-mini", messages=MESSAGES)
+    assert "max_completion_tokens" not in create.call_args.kwargs
+    assert "max_output_tokens" not in responses_create.call_args.kwargs
+
+
+@pytest.mark.parametrize("provider", ["claude", "gemini", "openrouter"])
+def test_unspecified_sdk_output_limit_preserves_provider_default(provider):
+    if provider == "claude":
+        create = Mock(return_value=SimpleNamespace(content=[SimpleNamespace(type="text", text="42.")]))
+        client = SimpleNamespace(messages=SimpleNamespace(create=create))
+        claude_connector.claude_chat(client, model="claude-3-5-haiku-20241022", messages=MESSAGES)
+        assert create.call_args.kwargs["max_tokens"] == claude_connector.DEFAULT_CLAUDE_OUTPUT_TOKENS
+    elif provider == "gemini":
+        create = Mock(return_value=SimpleNamespace(text="42."))
+        client = SimpleNamespace(models=SimpleNamespace(generate_content=create))
+        gemini_connector.gemini_chat(client, model="gemini-2.5-flash", messages=MESSAGES)
+        assert "max_output_tokens" not in create.call_args.kwargs["config"]
+    else:
+        client, create = completion_client()
+        openrouter_connector.openrouter_chat(client, model="openai/gpt-5-mini", messages=MESSAGES)
+        assert "max_tokens" not in create.call_args.kwargs
+        assert "max_completion_tokens" not in create.call_args.kwargs
+
+
+@pytest.mark.parametrize("provider", ["gemini", "openrouter", "ollama"])
+def test_unspecified_rest_output_limit_preserves_provider_default(monkeypatch, provider):
+    if provider == "gemini":
+        calls = capture_http(monkeypatch, gemini_connector, {
+            "candidates": [{"content": {"parts": [{"text": "42."}]}}],
+        })
+        gemini_connector.gemini_chat(None, model="gemini-2.5-flash", messages=MESSAGES)
+        assert "maxOutputTokens" not in calls[0][1]["generationConfig"]
+    elif provider == "openrouter":
+        calls = capture_http(monkeypatch, openrouter_connector, {
+            "choices": [{"message": {"content": "42."}}],
+        })
+        openrouter_connector.openrouter_chat(None, model="openai/gpt-5-mini", messages=MESSAGES)
+        assert "max_tokens" not in calls[0][1]
+        assert "max_completion_tokens" not in calls[0][1]
+    else:
+        calls = capture_http(monkeypatch, ollama_connector, {"message": {"content": "42."}})
+        ollama_connector.ollama_chat(None, model="llama3.2", messages=MESSAGES)
+        assert "num_predict" not in calls[0][1]["options"]
+
+
+@pytest.mark.parametrize("budget", [1, 5, 32])
+@pytest.mark.parametrize("prompt", ["hello", "Explain " + "long_text_" * 30])
+def test_mock_output_limit_truncates_reply_and_records_limited_usage(budget, prompt):
+    messages = [{"role": "user", "content": prompt}]
+    full_reply = mock_connector.mock_chat("demo", messages, system_prompt=SYSTEM)
+    with capture_token_usage() as usage:
+        reply = mock_connector.mock_chat(
+            "demo", messages, system_prompt=SYSTEM, max_output_tokens=budget,
+        )
+    assert reply
+    assert full_reply.startswith(reply)
+    assert len(reply) < len(full_reply)
+    assert estimate_tokens(reply) <= budget
+    assert usage.output_tokens == estimate_tokens(reply)
+    assert usage.input_tokens == estimate_tokens(f"{SYSTEM}\n{prompt}")
+
+
+def test_mock_unspecified_or_sufficient_output_limit_keeps_full_reply():
+    full_reply = mock_connector.mock_chat("demo", MESSAGES, system_prompt=SYSTEM)
+    assert mock_connector.mock_chat("demo", MESSAGES, system_prompt=SYSTEM, max_output_tokens=-1) == full_reply
+    assert mock_connector.mock_chat("demo", MESSAGES, system_prompt=SYSTEM, max_output_tokens=1000) == full_reply
 
 
 @pytest.mark.parametrize("model,selected,expected", [
@@ -235,7 +312,8 @@ def test_openrouter_sdk_uses_extra_body_for_reasoning(selected, expected):
         assert "temperature" not in options
     assert "reasoning" not in options
     assert "reasoning_effort" not in options
-    assert options["max_tokens"] == 300
+    assert options["max_completion_tokens"] == 300
+    assert "max_tokens" not in options
     assert options["messages"] == [{"role": "system", "content": SYSTEM}, *MESSAGES]
     assert reply == "The number is 42."
 
@@ -263,7 +341,8 @@ def test_openrouter_rest_uses_reasoning_payload(monkeypatch, selected, expected)
         assert "temperature" not in payload
     assert "extra_body" not in payload
     assert payload["messages"] == [{"role": "system", "content": SYSTEM}, *MESSAGES]
-    assert payload["max_tokens"] == 300
+    assert payload["max_completion_tokens"] == 300
+    assert "max_tokens" not in payload
     assert timeout == 15
     assert reply == "42."
     assert (usage.input_tokens, usage.output_tokens) == (12, 2)

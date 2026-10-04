@@ -1,9 +1,9 @@
 ﻿import React, { useState, useEffect, useRef } from 'react';
 import { getExampleConfig, getExampleConfigUrl, getModelCapabilities, loadConfigFile, recordConfigLoad, validateConfig } from '../services/api';
-import { DEFAULT_MEMORY_SOURCES, getConfigRoutes, setAgentFinalRetries, setMemorySource, setRouteEffort, suggestedModelId } from './configHelpers';
+import { DEFAULT_MEMORY_SOURCES, getConfigRoutes, setAgentFinalRetries, setGrossTokenLimit, setMemorySource, setRouteEffort, setRouteTokenLimit, suggestedModelId } from './configHelpers';
 
 export function ConfigModal({ isOpen, onClose, onConfigSaved, config, models = [], activeSessionId, libraryEntry, libraryMode = false, onSaveCopy }) {
-  const [configText, setConfigText] = useState('');
+  const [configText, setConfigText] = useState(() => config ? JSON.stringify(config, null, 2) : '');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [fileName, setFileName] = useState('');
@@ -110,7 +110,7 @@ export function ConfigModal({ isOpen, onClose, onConfigSaved, config, models = [
       if (!metadata.name.trim()) throw new Error('Enter a name for this configuration.');
       if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/.test(metadata.model_id)) throw new Error('Model ID must start with a letter or number and contain only letters, numbers, dots, underscores, or hyphens (100 characters maximum).');
       const contextLength = metadata.context_length === '' ? null : Number(metadata.context_length);
-      if (contextLength !== null && (!Number.isSafeInteger(contextLength) || contextLength < 1)) throw new Error('Context limit must be a positive whole number.');
+      if (contextLength !== null && (!Number.isSafeInteger(contextLength) || contextLength < 1)) throw new Error('Advertised context size must be a positive whole number.');
       await onConfigSaved(normalized, { ...metadata, name: metadata.name.trim(), context_length: contextLength });
     } else {
       await onConfigSaved(normalized, { name: fileName || 'Session configuration', source: 'editor' });
@@ -153,8 +153,8 @@ export function ConfigModal({ isOpen, onClose, onConfigSaved, config, models = [
               <label>API model ID<input value={metadata.model_id} maxLength={100} disabled={loading || Boolean(libraryEntry?.id)} onChange={(event) => { modelIdEdited.current = true; setMetadata((previous) => ({ ...previous, model_id: event.target.value })); }} placeholder="my-assistant" /></label>
               <p className="config-description library-field-help">A unique, permanent ID used to select this configuration in API clients.</p>
               <label>Description<input value={metadata.description} maxLength={2000} disabled={loading} onChange={(event) => setMetadata((previous) => ({ ...previous, description: event.target.value }))} placeholder="Optional description" /></label>
-              <label>Context limit (tokens, optional)<input type="number" min="1" step="1" value={metadata.context_length} disabled={loading} onChange={(event) => setMetadata((previous) => ({ ...previous, context_length: event.target.value }))} placeholder="Derive from configured models" /></label>
-              <p className="config-description library-field-help">Actual context limit of the routing configuration; use the lowest limit across its models.</p>
+              <label>Advertised context size (tokens, optional)<input type="number" min="1" step="1" value={metadata.context_length} disabled={loading} onChange={(event) => setMetadata((previous) => ({ ...previous, context_length: event.target.value }))} placeholder="Derive from configured models" /></label>
+              <p className="config-description library-field-help">Shown to API clients as this configuration's context size. Set the configuration and per-model limits below to enforce input and output budgets.</p>
               <label className="library-active-field"><input type="checkbox" checked={metadata.active} disabled={loading} onChange={(event) => setMetadata((previous) => ({ ...previous, active: event.target.checked }))} /> Active for new chats and API clients</label>
             </div>
           )}
@@ -180,6 +180,34 @@ export function ConfigModal({ isOpen, onClose, onConfigSaved, config, models = [
             disabled={loading} spellCheck={false}
             placeholder='Choose a file, use the example, or paste your config.json here.'
           />
+          {configObject && (
+            <section className="config-token-limits" aria-labelledby="config-token-limits-title">
+              <h3 id="config-token-limits-title">Configuration token limits</h3>
+              <p className="config-description" id="config-token-limits-help">These top-level limits apply to every model in this configuration. Each route uses the smaller of its model limit and the configuration limit when both are set. Blank adds no Connector cap; provider capacity and lower client output limits still apply.</p>
+              <div className="config-token-limit-controls">
+                {[
+                  ['gross_max_input_token', 'Configuration input limit (tokens)'],
+                  ['gross_max_output_token', 'Configuration output limit (tokens)'],
+                ].map(([field, label]) => (
+                  <label key={field} htmlFor={field}>
+                    {label}
+                    <input
+                      id={field} type="number" min="1" max="1000000000" step="1"
+                      value={configObject[field] ?? ''} placeholder="No configuration cap" disabled={loading}
+                      aria-describedby="config-token-limits-help"
+                      onChange={(event) => {
+                        try {
+                          const value = event.target.value === '' ? '' : Number(event.target.value);
+                          setConfigText(JSON.stringify(setGrossTokenLimit(readConfig(), field, value), null, 2));
+                          setError('');
+                        } catch (err) { setError(err.message); }
+                      }}
+                    />
+                  </label>
+                ))}
+              </div>
+            </section>
+          )}
           {configObject && (
             <section className="config-memory-sources" aria-labelledby="memory-sources-title">
               <h3 id="memory-sources-title">Memory sources</h3>
@@ -223,9 +251,11 @@ export function ConfigModal({ isOpen, onClose, onConfigSaved, config, models = [
             </section>
           )}
           {routes.length > 0 && (
-            <section className="config-efforts" aria-label="Model effort settings">
-              <h3>Model effort</h3>
-              <p className="config-description">Choose an effort level for each supported model. Changes are written to the JSON above.</p>
+            <section className="config-efforts" aria-label="Model limits and effort settings">
+              <h3>Model limits and effort</h3>
+              <p className="config-description">Set optional token limits for each model. Blank adds no model cap; configuration limits and provider capacity still apply. Changes update the JSON above.</p>
+              <p className="config-description" id="model-limits-help">Input limits cover the estimated prompt, including instructions, memory, messages, and tools. An oversized route is skipped or returns an error without trimming. Output caps generated tokens, including reasoning where counted by the provider; lower client limits still apply.</p>
+              <p className="config-description">These limits use tokens. <code>context_window</code> controls the number of recent messages.</p>
               {routes.map((route) => {
                 const capability = models.find((item) => item.provider === route.provider && item.id === route.model) || customCapabilities[route.key];
                 const levels = capability?.effort_levels || [];
@@ -234,22 +264,52 @@ export function ConfigModal({ isOpen, onClose, onConfigSaved, config, models = [
                 const selectId = 'effort-' + route.path.join('-');
                 return (
                   <div className="config-effort-row" key={selectId}>
-                    <label htmlFor={levels.length ? selectId : undefined}>
+                    <div className="config-route-model">
                       <span className="config-route-number">{route.label}</span>
                       <span>{route.provider} / {route.model}</span>
-                    </label>
-                    {levels.length ? (
-                      <select
-                        id={selectId} value={route.effort || ''} disabled={loading}
-                        onChange={(event) => setConfigText(JSON.stringify(setRouteEffort(readConfig(), route.path, event.target.value), null, 2))}
-                      >
-                        <option value="">{defaultEffort ? `Default (${defaultEffort})` : 'Provider default (omit effort)'}</option>
-                        {invalidEffort && <option value={route.effort}>{route.effort} (unsupported)</option>}
-                        {levels.map((effort) => <option key={effort} value={effort}>{effort}</option>)}
-                      </select>
-                    ) : (
-                      <span className="config-description">{!capability ? 'Checking support…' : capability.error ? 'Could not check support' : 'No effort setting'}</span>
-                    )}
+                    </div>
+                    <div className="config-route-controls">
+                      <label htmlFor={levels.length ? selectId : undefined}>
+                        Effort
+                        {levels.length ? (
+                          <select
+                            id={selectId} value={route.effort || ''} disabled={loading}
+                            aria-label={`Effort for ${route.label}: ${route.provider} / ${route.model}`}
+                            onChange={(event) => {
+                              setConfigText(JSON.stringify(setRouteEffort(readConfig(), route.path, event.target.value), null, 2));
+                              setError('');
+                            }}
+                          >
+                            <option value="">{defaultEffort ? `Default (${defaultEffort})` : 'Provider default'}</option>
+                            {invalidEffort && <option value={route.effort}>{route.effort} (unsupported)</option>}
+                            {levels.map((effort) => <option key={effort} value={effort}>{effort}</option>)}
+                          </select>
+                        ) : (
+                          <span className="config-description">{!capability ? 'Checking support…' : capability.error ? 'Could not check support' : 'No effort setting'}</span>
+                        )}
+                      </label>
+                      {[
+                        ['max_input_tokens', 'Input limit (tokens)'],
+                        ['max_output_tokens', 'Output limit (tokens)'],
+                      ].map(([field, label]) => (
+                        <label key={field} htmlFor={`${field}-${route.path.join('-')}`}>
+                          {label}
+                          <input
+                            id={`${field}-${route.path.join('-')}`} type="number" min="1" max="1000000000" step="1"
+                            value={route[field] ?? ''} placeholder="No model cap" disabled={loading}
+                            aria-label={`${label} for ${route.label}: ${route.provider} / ${route.model}`}
+                            aria-describedby="model-limits-help"
+                            onChange={(event) => {
+                              try {
+                                const value = event.target.value === '' ? '' : Number(event.target.value);
+                                setConfigText(JSON.stringify(setRouteTokenLimit(readConfig(), route.path, field, value), null, 2));
+                                setError('');
+                              } catch (err) { setError(err.message); }
+                            }}
+                          />
+                        </label>
+                      ))}
+                    </div>
                   </div>
                 );
               })}

@@ -11,6 +11,7 @@ def mock_chat(
     model: str,
     messages: List[Dict[str, str]],
     system_prompt: str = "",
+    max_output_tokens: int = -1,
 ) -> str:
     """Generate a realistic mock response for testing."""
     last_user_msg = ""
@@ -56,6 +57,18 @@ def mock_chat(
             f"This response was routed through `{model}` via The Connector. "
             "Your conversation history and context window are actively managed according to your session settings."
         )
+
+    if max_output_tokens > 0 and estimate_tokens(reply) > max_output_tokens:
+        # Mock responses have no provider tokenizer. Use the same estimate as
+        # token accounting and retain the longest prefix within the budget.
+        lower, upper = 0, len(reply)
+        while lower < upper:
+            middle = (lower + upper + 1) // 2
+            if estimate_tokens(reply[:middle]) <= max_output_tokens:
+                lower = middle
+            else:
+                upper = middle - 1
+        reply = reply[:lower].rstrip()
 
     output_tokens = estimate_tokens(reply)
     record_token_usage(input_tokens, output_tokens)

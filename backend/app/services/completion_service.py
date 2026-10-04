@@ -22,6 +22,7 @@ from ..audit_context import record_route_attempt
 from ..routing_logging import log_probability_choice
 from ..model_capabilities import gemini_thinking_config
 from ..schemas.configuration import normalize_config
+from .model_limits import InputContextLimitError, ensure_input_limit, completion_options_with_limit
 from .connectors import ChatAPIError, create_claude_client, create_openai_client, create_openrouter_client, estimate_tokens
 from .connectors.gemini_connector import get_gemini_api_key
 from .connectors.ollama_connector import ollama_base_url
@@ -212,6 +213,7 @@ class CompletionService:
         if config["system_prompt"]:
             supplied_messages.insert(0, {"role": "system", "content": config["system_prompt"]})
         errors, unsupported = [], []
+        input_error = None
         for step in config["sequences"]:
             if step.get("type") == "probability":
                 choices = step["choices"]
@@ -220,12 +222,21 @@ class CompletionService:
                 routes = [choices[index]] + [route for i, route in enumerate(choices) if i != index]
             else:
                 routes = [step]
+            routing_type = "probability" if step.get("type") == "probability" else "sequence_step"
             for route in routes:
+                try:
+                    ensure_input_limit(route, supplied_messages, options=options, config=config)
+                except InputContextLimitError as exc:
+                    input_error = exc
+                    record_route_attempt(route["provider"], route["model"], route.get("effort"),
+                                         "context_limit", attempt=0, error_type=type(exc).__name__,
+                                         routing_type=routing_type)
+                    continue
+                route_options = completion_options_with_limit(route, options, config=config)
                 for attempt in range(route["retries"] + 1):
                     attempt_started = time.perf_counter()
-                    routing_type = "probability" if step.get("type") == "probability" else "sequence_step"
                     try:
-                        response = self._execute(route, supplied_messages, options)
+                        response = self._execute(route, supplied_messages, route_options)
                         _validate_response(response)
                         returned_model = response.get("model")
                         response.update(provider=route["provider"], model=response.get("model") or route["model"])
@@ -253,6 +264,8 @@ class CompletionService:
                         errors.append(f"{route['provider']}/{route['model']}: {exc}")
                         if attempt < route["retries"]:
                             time.sleep(0.5)
+        if not errors and not unsupported and input_error is not None:
+            raise input_error
         if not errors and unsupported:
             raise UnsupportedCompletionOption("No configured route supports this request. " + "; ".join(unsupported))
         raise ChatAPIError("All configured completion routes failed. " + "; ".join(errors + unsupported))

@@ -51,6 +51,7 @@ from .schemas.skill import (
 )
 from .schemas.python_environment import PythonEnvironmentCreate, PythonEnvironmentRecord
 from .model_capabilities import effort_levels, default_effort
+from .services.model_limits import InputContextLimitError
 from .services import (
     agent_service,
     router,
@@ -70,7 +71,7 @@ from .services.python_environment_manager import (
 from .services.connectors import list_ollama_models
 from .services.configuration_manager import configuration_manager
 from .services.configuration_history import configuration_history_manager
-from .api.configurations import router as configurations_api
+from .api.configurations import router as configurations_api, detail_router as configuration_detail_api
 from .api.configuration_history import router as configuration_history_api
 from .api.compatibility import router as compatibility_api, CompatibilityError, error_response
 from .api.plugins import router as plugins_api, PluginFrameCORSMiddleware
@@ -122,6 +123,7 @@ app.add_middleware(RoutingLogContextMiddleware)
 app.add_middleware(PluginFrameCORSMiddleware)
 
 app.include_router(configurations_api)
+app.include_router(configuration_detail_api)
 app.include_router(configuration_history_api)
 app.include_router(compatibility_api)
 app.include_router(plugins_api)
@@ -362,6 +364,8 @@ def chat_endpoint(req: ChatRequest) -> ChatResponse:
             system_prompt=system_prompt,
             config=session_config,
         )
+    except InputContextLimitError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -585,6 +589,8 @@ def run_agent(req: AgentRunRequest) -> AgentRunResponse:
         raise session_error(exc) from exc
     try:
         resp = agent_service.run_agent(req, history=history, system_prompt=system_prompt, config=config)
+    except InputContextLimitError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Agent routing failure: {exc}") from exc
     try:

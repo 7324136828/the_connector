@@ -1,0 +1,29 @@
+{
+  "system_prompt": "You are a helpful, accurate assistant. Prefer concise answers and expand when asked. Use tools when necessary to complete the user's request.",
+  "past_memory": true,
+  "context_window": 4,
+  "gross_max_input_token": 100000,
+  "gross_max_output_token": 100000,
+  "memory_window": 4,
+  "memory_scope": "all_sessions",
+  "memory_sources": {
+    "completion_events": true,
+    "system_sessions": true,
+    "user_sessions": true
+  },
+  "agent_final_retries": 1,
+  "sequences": [
+    {
+      "provider": "openrouter",
+      "model": "stealth/space-bunny-alpha",
+      "retries": 5,
+      "effort": "minimal"
+    },
+    {
+      "model": "gpt-5-nano",
+      "provider": "openai",
+      "retries": 2,
+      "effort": "minimal"
+    }
+  ]
+}

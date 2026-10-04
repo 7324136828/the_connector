@@ -6,12 +6,26 @@ from fastapi import APIRouter, HTTPException, Response
 
 from ..schemas.library import ConfigurationCreate, ConfigurationRecord, ConfigurationUpdate
 from ..services.configuration_manager import (
+    AmbiguousConfigurationNameError,
     ConfigurationNotFoundError,
     DuplicateModelIdError,
     configuration_manager,
 )
 
 router = APIRouter(prefix="/api/configs", tags=["configurations"])
+detail_router = APIRouter(prefix="/api/configuration", tags=["configurations"])
+
+
+@detail_router.get("/detail/{configuration_name:path}")
+def get_configuration_detail(configuration_name: str):
+    """Return the configuration JSON for an exact saved display name."""
+    try:
+        record = configuration_manager.get_config_by_name(configuration_name)
+    except AmbiguousConfigurationNameError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if record is None:
+        raise HTTPException(status_code=404, detail="Configuration not found.")
+    return record["config"]
 
 
 @router.get("", response_model=list[ConfigurationRecord])

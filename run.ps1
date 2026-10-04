@@ -1,5 +1,6 @@
 param(
     [switch]$Local,
+    [Alias("completion-no-database-access")][switch]$CompletionNoDatabaseAccess,
     [ValidateRange(1, 65535)][int]$UiPort = 5130,
     [ValidateRange(1, 65535)][int]$BackendPort = 8301,
     [ValidateRange(1, 65535)][int]$KokoroPort = 8302
@@ -201,10 +202,15 @@ try {
     $env:CONNECTOR_BACKEND_PORT = [string]$BackendPort
     $env:KOKORO_BASE_URL = "http://127.0.0.1:$KokoroPort"
 
+    $backendArguments = @("run_backend.py", "--host", $publicHost, "--port", [string]$BackendPort)
+    if ($CompletionNoDatabaseAccess) {
+        $backendArguments += "--completion-no-database-access"
+    }
+
     $services += Start-ConnectorProcess `
         -Name "Connector API" `
         -FilePath $backendPython `
-        -ArgumentList @("run_backend.py", "--host", $publicHost, "--port", [string]$BackendPort) `
+        -ArgumentList $backendArguments `
         -WorkingDirectory $root
 
     $services += Start-ConnectorProcess `

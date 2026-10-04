@@ -23,11 +23,28 @@ def _keys(value: dict, allowed: set, path: str) -> None:
         raise ValueError(f"Unknown {path} field(s): {', '.join(sorted(unknown))}.")
 
 
+def _optional_token_limit(value: dict, field: str, path: str, alias: str | None = None) -> None:
+    """Normalize finite caps while keeping absent/null caps truly unspecified."""
+    names = (field, alias) if alias else (field,)
+    limits = [_integer(value[name], f"{path}.{name}", 1, 1_000_000_000)
+              for name in names if value.get(name) is not None]
+    if len(set(limits)) > 1:
+        raise ValueError(f"Conflicting {path}.{field} and {path}.{alias} limits.")
+    if alias:
+        value.pop(alias, None)
+    if limits:
+        value[field] = limits[0]
+    else:
+        value.pop(field, None)
+
+
 def _route(value: Any, path: str, default_retries: int = 1, choice: bool = False) -> dict:
     if not isinstance(value, dict):
         raise ValueError(f"{path} must be an object.")
     route = deepcopy(value)
-    _keys(route, {"provider", "model", "effort", "retries", "probability"} if choice else {"provider", "model", "effort", "retries", "type"}, path)
+    fields = {"provider", "model", "effort", "retries", "max_input_tokens", "max_output_tokens",
+              "max_input_token", "max_output_token"}
+    _keys(route, fields | ({"probability"} if choice else {"type"}), path)
     provider = route.get("provider")
     if not isinstance(provider, str):
         raise ValueError(f"{path}.provider is required.")
@@ -39,6 +56,8 @@ def _route(value: Any, path: str, default_retries: int = 1, choice: bool = False
         raise ValueError(f"{path}.model must be a nonempty string.")
     route.update(provider=provider, model=model.strip())
     route["retries"] = _integer(route.get("retries", default_retries), f"{path}.retries", 0, 5)
+    for field in ("max_input_tokens", "max_output_tokens"):
+        _optional_token_limit(route, field, path, alias=field[:-1])
     effort = resolve_effort(provider, model.strip(), route.get("effort"))
     if effort is None:
         route.pop("effort", None)
@@ -57,7 +76,11 @@ def normalize_config(value: Any) -> dict:
     if not isinstance(value, dict):
         raise ValueError("config must be a config.json object.")
     config = deepcopy(value)
-    _keys(config, {"sequences", "system_prompt", "past_memory", "context_window", "memory_window", "memory_scope", "memory_sources", "agent_final_retries"}, "config")
+    _keys(config, {"sequences", "system_prompt", "past_memory", "context_window", "memory_window",
+                   "memory_scope", "memory_sources", "agent_final_retries",
+                   "gross_max_input_token", "gross_max_output_token"}, "config")
+    for field in ("gross_max_input_token", "gross_max_output_token"):
+        _optional_token_limit(config, field, "config")
     steps = config.get("sequences")
     if not isinstance(steps, list) or not 1 <= len(steps) <= 30:
         raise ValueError("config.sequences must contain between 1 and 30 routing steps.")

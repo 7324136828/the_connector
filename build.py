@@ -142,10 +142,10 @@ def pyinstaller_command(python: Path, stage: Path) -> list[str | Path]:
 
 
 def pip_cache_options() -> list[str | Path]:
-    # Explicit --cache-dir would otherwise override the CI environment setting.
+    # Honor the shared CI cache path and the explicit opt-out for limited disks.
     if os.environ.get("PIP_NO_CACHE_DIR") == "1":
         return ["--no-cache-dir"]
-    return ["--cache-dir", WORK / "pip-cache"]
+    return ["--cache-dir", Path(os.environ.get("PIP_CACHE_DIR", WORK / "pip-cache"))]
 
 
 def select_kokoro_python(device: str, *, skip_install: bool, require_gpu: bool = True) -> Path:
@@ -331,6 +331,7 @@ def smoke_test(package: Path, workspace: Path, *, timeout: float = 120.0) -> Non
         "AGENT_PYTHON_ENVS_DIR": str(workspace / "data" / "python-envs"),
         "JOBS_DIR": str(workspace / "data" / "jobs"),
         "HF_HOME": str(workspace / "huggingface"),
+        "HF_HUB_CACHE": str(workspace / "huggingface" / "hub"),
         "HF_HUB_OFFLINE": "1",
         "TRANSFORMERS_OFFLINE": "1",
     })
@@ -623,7 +624,8 @@ def main(argv: list[str] | None = None) -> int:
         run([python, "-m", "pip", "install", *pip_cache_options(),
              "-r", BACKEND / "requirements.txt",
              "-r", BACKEND / "requirements-build.txt"])
-        run([npm, "ci", "--cache", WORK / "npm-cache"], cwd=FRONTEND)
+        npm_cache = Path(os.environ.get("NPM_CONFIG_CACHE", WORK / "npm-cache"))
+        run([npm, "ci", "--cache", npm_cache], cwd=FRONTEND)
     run([npm, "test"], cwd=FRONTEND)
 
     stage = WORK / ("portable-" + uuid.uuid4().hex)

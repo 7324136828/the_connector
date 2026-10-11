@@ -5,6 +5,7 @@ import io
 import os
 import tempfile
 import unittest
+import wave
 from pathlib import Path
 from unittest import mock
 from urllib.error import HTTPError
@@ -16,13 +17,34 @@ from build import (
     PROFILES,
     BuildError,
     checked_path,
+    kokoro_bundle_device,
+    kokoro_pyinstaller_command,
     prepare_artifacts,
     publish_artifacts,
     pyinstaller_command,
     smoke_test,
+    select_kokoro_python,
     validate_artifacts,
+    validate_kokoro_bundle,
+    validate_kokoro_health,
     validate_port_defaults,
 )
+
+
+def write_kokoro_bundle(bundle: Path, version: str = "new", *, device: str = "cpu") -> None:
+    (bundle / "_internal" / "torch" / "lib").mkdir(parents=True)
+    (bundle / "kokoro.exe").write_bytes(f"kokoro-{version}".encode("ascii"))
+    (bundle / "_internal" / "python312.dll").write_bytes(f"python-{version}".encode("ascii"))
+    (bundle / "_internal" / "torch" / "lib" / "torch_cpu.dll").write_bytes(f"torch-{version}".encode("ascii"))
+    (bundle / "runtime.json").write_text(json.dumps({"device": device}), encoding="ascii")
+    if device == "cuda":
+        for name in ("torch_cuda.dll", "cudart64_12.dll"):
+            (bundle / "_internal" / "torch" / "lib" / name).write_bytes(f"cuda-{version}".encode("ascii"))
+    (bundle / "_internal" / "language_tags" / "data" / "json").mkdir(parents=True)
+    (bundle / "_internal" / "language_tags" / "data" / "json" / "index.json").write_bytes(b"{}")
+    (bundle / "_internal" / "kokoro-model" / "voices").mkdir(parents=True)
+    for name in ("config.json", "kokoro-v1_0.pth", "voices/af_heart.pt"):
+        (bundle / "_internal" / "kokoro-model" / name).write_bytes(f"asset-{version}".encode("ascii"))
 
 
 def write_packages(directory: Path, version: str) -> None:
@@ -30,6 +52,7 @@ def write_packages(directory: Path, version: str) -> None:
         package = directory / profile
         package.mkdir(parents=True, exist_ok=True)
         (package / "server.exe").write_bytes(f"server-{profile}-{version}".encode("ascii"))
+        write_kokoro_bundle(package / "python-kokoro", f"{profile}-{version}")
         (package / "public" / "assets").mkdir(parents=True)
         (package / "public" / "index.html").write_text(version, encoding="utf-8")
         (package / "public" / "assets" / "app.js").write_text(
@@ -71,6 +94,7 @@ class ArtifactPreparationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             stage = Path(directory)
             (stage / "server.exe").write_bytes(b"shared backend")
+            write_kokoro_bundle(stage / "python-kokoro", device="cuda")
             (stage / "public" / "assets").mkdir(parents=True)
             (stage / "public" / "index.html").write_text("shared frontend", encoding="utf-8")
             (stage / "public" / "assets" / "app.js").write_bytes(b"shared script")
@@ -88,6 +112,8 @@ class ArtifactPreparationTests(unittest.TestCase):
                     validate_artifacts(package, host=expected_host)
                     self.assertEqual({path.name for path in package.iterdir()}, set(ARTIFACTS) | {INITIAL_CONFIGURATION})
                     self.assertEqual((package / "server.exe").read_bytes(), b"shared backend")
+                    self.assertEqual(package_contents(package / "python-kokoro"), package_contents(stage / "python-kokoro"))
+                    self.assertEqual(kokoro_bundle_device(package / "python-kokoro"), "cuda")
                     self.assertEqual(package_contents(package / "public"), package_contents(stage / "public"))
                     self.assertEqual((package / "run.bat").read_text(encoding="ascii"), LAUNCHER)
                     self.assertEqual(
@@ -101,11 +127,45 @@ class ArtifactPreparationTests(unittest.TestCase):
             # Each mode remains usable after the shared staging files or the other mode change.
             (stage / "server.exe").unlink()
             (packages / "Debug" / "public" / "index.html").write_text("changed", encoding="utf-8")
+            (packages / "Debug" / "python-kokoro" / "_internal" / "python312.dll").write_bytes(b"changed")
             self.assertEqual((packages / "Release" / "server.exe").read_bytes(), b"shared backend")
             self.assertEqual(
                 (packages / "Release" / "public" / "index.html").read_text(encoding="utf-8"),
                 "shared frontend",
             )
+            self.assertEqual((packages / "Release" / "python-kokoro" / "_internal" / "python312.dll").read_bytes(), b"python-new")
+
+    def test_validation_requires_the_kokoro_executable_native_runtime_and_model(self) -> None:
+        for name in ("runtime.json", "kokoro.exe", "_internal/python312.dll", "_internal/torch/lib/torch_cpu.dll",
+                     "_internal/language_tags/data/json/index.json",
+                     "_internal/kokoro-model/config.json", "_internal/kokoro-model/kokoro-v1_0.pth",
+                     "_internal/kokoro-model/voices/af_heart.pt"):
+            with self.subTest(missing=name), tempfile.TemporaryDirectory() as directory:
+                bundle = Path(directory) / "python-kokoro"
+                write_kokoro_bundle(bundle)
+                (bundle / name).unlink()
+                with self.assertRaisesRegex(BuildError, "Kokoro"):
+                    validate_kokoro_bundle(bundle)
+
+    def test_cuda_bundle_requires_cuda_native_libraries(self) -> None:
+        for name in ("torch_cuda.dll", "cudart64_12.dll"):
+            with self.subTest(missing=name), tempfile.TemporaryDirectory() as directory:
+                bundle = Path(directory) / "python-kokoro"
+                write_kokoro_bundle(bundle, device="cuda")
+                validate_kokoro_bundle(bundle)
+                (bundle / "_internal" / "torch" / "lib" / name).unlink()
+                with self.assertRaisesRegex(BuildError, "CUDA PyTorch runtime"):
+                    validate_kokoro_bundle(bundle)
+
+    def test_bundle_device_rejects_missing_invalid_or_auto_defaults(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            bundle = Path(directory) / "python-kokoro"
+            write_kokoro_bundle(bundle)
+            for content in ("{", "[]", "{}", '{"device": "auto"}', '{"device": []}'):
+                with self.subTest(content=content):
+                    (bundle / "runtime.json").write_text(content, encoding="ascii")
+                    with self.assertRaisesRegex(BuildError, "Kokoro runtime"):
+                        kokoro_bundle_device(bundle)
 
     def test_validation_rejects_invalid_or_missing_port_mapping(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -166,6 +226,71 @@ class ArtifactPreparationTests(unittest.TestCase):
         self.assertIn("backend.app.main", hidden)
         self.assertIn("google.genai", hidden)
         self.assertIn("--additional-hooks-dir", command)
+
+    def test_kokoro_freezer_is_a_separate_directory_with_offline_assets_and_metadata(self) -> None:
+        command = [str(value) for value in kokoro_pyinstaller_command(Path("kokoro-python.exe"), Path("stage"))]
+        self.assertEqual(command[0], "kokoro-python.exe")
+        self.assertIn("--onedir", command)
+        self.assertNotIn("--onefile", command)
+        self.assertIn(f"{Path('stage') / 'kokoro-model'}{os.pathsep}kokoro-model", command)
+        collected = [command[index + 1] for index, value in enumerate(command) if value == "--collect-all"]
+        self.assertEqual(set(collected), {"kokoro", "misaki", "en_core_web_sm", "espeakng_loader"})
+        data = [command[index + 1] for index, value in enumerate(command) if value == "--collect-data"]
+        self.assertEqual(set(data), {"language_tags", "phonemizer"})
+        metadata = [command[index + 1] for index, value in enumerate(command) if value == "--copy-metadata"]
+        self.assertIn("en-core-web-sm", metadata)
+        self.assertIn("kokoro", metadata)
+        self.assertIn("phonemizer-fork", metadata)
+        hidden = [command[index + 1] for index, value in enumerate(command) if value == "--hidden-import"]
+        self.assertIn("transformers.models.albert.configuration_albert", hidden)
+        self.assertIn("transformers.models.albert.modeling_albert", hidden)
+        self.assertTrue(command[-1].endswith(str(Path("python-kokoro") / "server.py")))
+
+    def test_skip_install_requires_a_prepared_isolated_kokoro_environment(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            work = Path(directory)
+            with mock.patch("build.WORK", work), mock.patch("build.run") as run:
+                with self.assertRaisesRegex(BuildError, "Prepared Kokoro build environment is missing"):
+                    select_kokoro_python("cpu", skip_install=True)
+                run.assert_not_called()
+                python = work / "kokoro-venv-cpu" / "Scripts" / "python.exe"
+                python.parent.mkdir(parents=True)
+                python.write_bytes(b"python")
+                self.assertEqual(select_kokoro_python("cpu", skip_install=True), python)
+                self.assertEqual(run.call_count, 2)
+                self.assertTrue(all(call.args[0][0] == python for call in run.call_args_list))
+                self.assertFalse(any("pip" in call.args[0] for call in run.call_args_list))
+
+    def test_cuda_build_preflight_executes_a_gpu_tensor(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            work = Path(directory)
+            python = work / "kokoro-venv-cuda" / "Scripts" / "python.exe"
+            python.parent.mkdir(parents=True)
+            python.write_bytes(b"python")
+            with mock.patch("build.WORK", work), mock.patch("build.run") as run:
+                self.assertEqual(select_kokoro_python("cuda", skip_install=True), python)
+            preflight = run.call_args.args[0]
+            self.assertEqual(preflight[:2], [python, "-c"])
+            self.assertIn("torch.cuda.is_available()", preflight[2])
+            self.assertIn("torch.ones(1, device='cuda').add_(1).item()", preflight[2])
+
+    @unittest.skipUnless(os.name == "nt", "The portable build requires Windows")
+    def test_build_defaults_to_cuda_and_cpu_is_explicit(self) -> None:
+        from build import main
+
+        for arguments, expected in ((["--skip-install"], "cuda"),
+                                    (["--skip-install", "--kokoro-device", "cpu"], "cpu")):
+            with self.subTest(device=expected), tempfile.TemporaryDirectory() as directory:
+                with (
+                    mock.patch("build.ROOT", Path(directory)),
+                    mock.patch("build.WORK", Path(directory) / "build"),
+                    mock.patch("build.select_python", return_value=Path("python.exe")),
+                    mock.patch("build.shutil.which", return_value="npm.cmd"),
+                    mock.patch("build.select_kokoro_python", side_effect=BuildError("test stop")) as select,
+                ):
+                    with self.assertRaisesRegex(BuildError, "test stop"):
+                        main(arguments)
+                    select.assert_called_once_with(expected, skip_install=True)
 
 
 class PublicationTests(unittest.TestCase):
@@ -247,6 +372,28 @@ class PublicationTests(unittest.TestCase):
             self.assertEqual(managed_contents(output), old_contents)
             self.assertEqual(managed_contents(stage), new_contents)
 
+    def test_locked_kokoro_bundle_rolls_back_both_profiles(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repository = Path(directory)
+            output = repository / "dist"
+            stage = repository / "build" / "packages"
+            write_packages(output, "old")
+            write_packages(stage, "new")
+            old_contents = managed_contents(output)
+            new_contents = managed_contents(stage)
+            original_rename = Path.rename
+
+            def fail_locked_kokoro(source: Path, target: Path) -> Path:
+                if source == output / "Release" / "python-kokoro":
+                    raise OSError("simulated running Kokoro")
+                return original_rename(source, target)
+
+            with mock.patch.object(Path, "rename", new=fail_locked_kokoro):
+                with self.assertRaisesRegex(BuildError, "Could not replace Debug/Release artifacts"):
+                    publish_artifacts(stage, repository=repository)
+            self.assertEqual(managed_contents(output), old_contents)
+            self.assertEqual(managed_contents(stage), new_contents)
+
     def test_failed_first_install_leaves_no_mixed_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             repository = Path(directory)
@@ -323,6 +470,7 @@ class FrozenStartupTests(unittest.TestCase):
             package = stage / "packages" / "Debug"
             package.mkdir(parents=True)
             (package / "server.exe").write_bytes(b"frozen stub")
+            write_kokoro_bundle(package / "python-kokoro")
             (package / "run.bat").write_text(LAUNCHER, encoding="ascii")
             (package / "port_mapping.json").write_text(
                 '{"react_port": 5300, "connector_port": 8300, "kokoro_port": 8301}', encoding="utf-8",
@@ -345,12 +493,13 @@ class FrozenStartupTests(unittest.TestCase):
             self.assertEqual(environment["DATA_DIR"], str(stage / "smoke" / "data"))
             process.terminate.assert_not_called()
 
-    def test_successful_smoke_stops_child_process(self) -> None:
+    def run_successful_smoke(self, device: str, actual_device: str) -> None:
         with tempfile.TemporaryDirectory() as directory:
             stage = Path(directory)
             package = stage / "packages" / "Debug"
             package.mkdir(parents=True)
             (package / "server.exe").write_bytes(b"frozen stub")
+            write_kokoro_bundle(package / "python-kokoro", device=device)
             (package / "run.bat").write_text(LAUNCHER, encoding="ascii")
             (package / "port_mapping.json").write_text(
                 '{"react_port": 5300, "connector_port": 8300, "kokoro_port": 8301}', encoding="utf-8",
@@ -359,6 +508,31 @@ class FrozenStartupTests(unittest.TestCase):
             process.poll.return_value = None
             success = mock.MagicMock()
             success.__enter__.return_value.status = 200
+            health = mock.MagicMock()
+            health.__enter__.return_value.status = 200
+            health.__enter__.return_value.read.return_value = b'{"status": "ok"}'
+            speech_health = mock.MagicMock()
+            speech_health.__enter__.return_value.status = 200
+            speech_health.__enter__.return_value.read.return_value = json.dumps({
+                "status": "ok", "service": "python-kokoro", "device": device,
+            }).encode("utf-8")
+            loaded_health = mock.MagicMock()
+            loaded_health.__enter__.return_value.status = 200
+            loaded_health.__enter__.return_value.read.return_value = json.dumps({
+                "status": "ok", "device": device, "modelDevices": {"a": actual_device},
+            }).encode("utf-8")
+            voices = mock.MagicMock()
+            voices.__enter__.return_value.status = 200
+            voices.__enter__.return_value.read.return_value = b'{"voices": ["af_heart"]}'
+            audio = io.BytesIO()
+            with wave.open(audio, "wb") as wav:
+                wav.setnchannels(1)
+                wav.setsampwidth(2)
+                wav.setframerate(24000)
+                wav.writeframes(b"\x00\x00" * 100)
+            speech = mock.MagicMock()
+            speech.__enter__.return_value.status = 200
+            speech.__enter__.return_value.read.return_value = audio.getvalue()
             proxy = HTTPError("http://localhost/v1/check", 404, "Not found", {},
                               io.BytesIO(b'{"detail": "Not Found"}'))
             settings = mock.MagicMock()
@@ -367,19 +541,55 @@ class FrozenStartupTests(unittest.TestCase):
                 "settings_path": str(stage / "smoke" / "settings" / "settings.json"),
             }).encode("utf-8")
             opener = mock.Mock()
-            opener.open.side_effect = [success, success, settings, proxy]
+            opener.open.side_effect = [health, success, speech_health, voices, settings, proxy, speech, loaded_health]
             with (
-                mock.patch("build.subprocess.Popen", return_value=process),
+                mock.patch("build.subprocess.Popen", return_value=process) as start,
                 mock.patch("build.subprocess.run", side_effect=self.run_command) as taskkill,
                 mock.patch("build.build_opener", return_value=opener),
+                mock.patch.dict(os.environ, {"KOKORO_DEVICE": "cpu", "PODCAST_DEVICE": "cpu"}),
             ):
                 smoke_test(package, stage / "smoke")
+            environment = start.call_args.kwargs["env"]
+            saved = json.loads((stage / "smoke" / "settings" / "settings.json").read_text())
+            ports = [saved[name] for name in ("react_port", "connector_port", "kokoro_port")]
+            self.assertEqual(len(set(ports)), 3)
+            self.assertNotIn("KOKORO_BASE_URL", environment)
+            self.assertNotIn("KOKORO_DEVICE", environment)
+            self.assertNotIn("PODCAST_DEVICE", environment)
+            self.assertEqual(environment["HF_HUB_OFFLINE"], "1")
+            urls = [getattr(call.args[0], "full_url", call.args[0]) for call in opener.open.call_args_list]
+            self.assertIn(f"http://127.0.0.1:{saved['react_port']}/api/speech/health", urls)
+            self.assertIn(f"http://127.0.0.1:{saved['react_port']}/api/speech/voices", urls)
+            self.assertIn(f"http://127.0.0.1:{saved['react_port']}/api/speech", urls)
             if os.name == "nt":
                 self.assertEqual(taskkill.call_args.args[0][1:], ["/PID", "12345", "/T", "/F"])
                 process.terminate.assert_not_called()
             else:
                 process.terminate.assert_called_once()
             process.wait.assert_called_once()
+
+    def test_cpu_smoke_checks_loaded_model_and_stops_child_process(self) -> None:
+        self.run_successful_smoke("cpu", "cpu")
+
+    def test_cuda_smoke_checks_loaded_gpu_model_and_stops_child_process(self) -> None:
+        self.run_successful_smoke("cuda", "cuda:0")
+
+    def test_cuda_smoke_rejects_cpu_model_after_successful_speech(self) -> None:
+        with self.assertRaisesRegex(BuildError, "model used unexpected devices"):
+            self.run_successful_smoke("cuda", "cpu")
+
+    def test_health_validation_checks_actual_devices_after_synthesis(self) -> None:
+        for expected, health in (
+            ("cuda", {"device": "cpu"}),
+            ("cuda", {"device": "cuda", "modelDevices": {}}),
+            ("cuda", {"device": "cuda", "modelDevices": {"a": "cuda:0", "b": "cpu"}}),
+            ("cpu", {"device": "cpu", "modelDevices": {"a": "cuda:0"}}),
+            ("cpu", {"device": "cpu", "modelDevices": {"a": None}}),
+        ):
+            with self.subTest(expected=expected, health=health), self.assertRaises(BuildError):
+                validate_kokoro_health(health, expected, model_loaded=True)
+        validate_kokoro_health({"device": "cuda", "modelDevices": {"a": "cuda:1"}},
+                              "cuda", model_loaded=True)
 
 
 if __name__ == "__main__":

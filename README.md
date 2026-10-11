@@ -361,7 +361,7 @@ Vite forwards `/api` and `/v1` requests to the selected API address, so remote b
 
 ### Portable Windows build
 
-Build on Windows with Python 3.11+ and Node.js/npm installed (the development speech environment requires Python 3.12):
+Build on Windows with Python 3.11+, Python 3.12, and Node.js/npm installed:
 
 ```powershell
 .\build.bat
@@ -369,14 +369,20 @@ Build on Windows with Python 3.11+ and Node.js/npm installed (the development sp
 python build.py
 # Reuse installed build dependencies:
 .\build.bat --skip-install
+# Build a CPU-only bundle explicitly:
+.\build.bat --kokoro-device cpu
 ```
 
-The builder validates the root `port_mapping.json`, uses the active Python environment or the repository `.venv`, installs API/PyInstaller and npm dependencies, runs frontend tests, builds React, and packages the API with PyInstaller. It copies the validated mapping into both distributions and checks the executable's frontend and proxied API with isolated test storage before publishing:
+The builder validates the root `port_mapping.json`, uses the active Python environment or the repository `.venv` for the API, and prepares a separate Python 3.12 build environment for Kokoro. It installs API/PyInstaller and npm dependencies, runs frontend tests, builds React, and packages both services with PyInstaller. The default speech bundle uses CUDA PyTorch and requires a working NVIDIA GPU; `--kokoro-device cpu` creates a CPU-only bundle. The development Kokoro environment is preserved. Before publishing, the builder checks the frontend, proxied API, and bundled speech service with isolated test storage, synthesizes speech offline, and verifies the model tensors run on the selected device:
 
 ```text
 dist/
   Debug/                  Default host: 127.0.0.1
     server.exe            Packaged API and frontend static server
+    python-kokoro/         Isolated packaged speech service and dependencies
+      kokoro.exe          Started automatically by server.exe
+      runtime.json        Selected speech device (cuda by default)
+      _internal/          Python 3.12, PyTorch, and speech resources
     public/               Built React assets
     run.bat               Distribution launcher
     runtime.json          Default bind address
@@ -386,7 +392,7 @@ dist/
     ...                   Same application and layout
 ```
 
-Copy the entire chosen folder to another Windows machine, including `port_mapping.json`. The core API and web UI run without installing Python or Node.js on that machine. The built `run.bat` first calls `server.exe --initialize-settings` to validate the sidecar mapping, create the user settings file if absent, and add only missing port defaults. It then starts the application, which rereads the user JSON to select ports. Initialization preserves existing user settings and stops the launcher if the mapping or settings are invalid. Start either distribution with:
+Copy the entire chosen folder to another Windows machine, including `python-kokoro` and `port_mapping.json`. The API, web UI, and Kokoro run without installing Python or Node.js on that machine. The built `run.bat` first calls `server.exe --initialize-settings` to validate the sidecar mapping, create the user settings file if absent, and add only missing port defaults. It then starts the application, which rereads the user JSON to select ports. Initialization preserves existing user settings and stops the launcher if the mapping or settings are invalid. Start either distribution with:
 
 ```powershell
 .\dist\Debug\run.bat
@@ -395,13 +401,13 @@ Copy the entire chosen folder to another Windows machine, including `port_mappin
 .\dist\Release\run.bat --host 127.0.0.1
 ```
 
-The packaged defaults in user settings are frontend **5130**, API **8130**, and external Kokoro **8131**. The executable starts only the frontend and API listeners; it connects to Kokoro using the saved `kokoro_port` at `http://127.0.0.1:<port>` unless an explicit `KOKORO_BASE_URL` points to another service. Packaged frontend/API ports must be distinct and available; the executable reports a busy port instead of automatically advancing it. The frontend server proxies `/api` and `/v1`, including long completions and streamed responses, so changing ports requires no React rebuild. Ctrl+C stops both listeners.
+The packaged defaults in user settings are frontend **5130**, API **8130**, and Kokoro **8131**. The executable starts bundled Kokoro on loopback using the saved `kokoro_port`, waits for its health check, and then serves the frontend and API alongside it. Kokoro's device comes from its bundled `python-kokoro/runtime.json`: CUDA builds explicitly request GPU execution and stop with an error if CUDA is unavailable, without silently switching to CPU. `GET /api/speech/health` reports `device`, `gpuName`, and, after speech, the actual `modelDevices`. `--kokoro-port` overrides the speech port for a run. An explicit `KOKORO_BASE_URL` selects an external speech service instead. The three local ports must be distinct and available; the executable reports a busy port instead of automatically advancing it. The frontend server proxies `/api` and `/v1`, including long completions and streamed responses, so changing ports requires no React rebuild. Ctrl+C stops all three services. A failed bundled speech process stops the application and reports its startup log.
 
 An optional `.env` beside `server.exe` supports the provider keys, storage overrides, and launcher settings. Ports come from the saved JSON, with CLI port flags taking precedence for that run. For the bind address, CLI options take precedence over process environment variables, then `.env`, then the generated `runtime.json` profile. Relative routing `CONFIG_PATH` and explicit storage paths resolve beside the executable. Rebuilding replaces application artifacts, including `port_mapping.json`, while preserving per-user settings and each folder's existing `.env`, `config.json`, and other user files. Changes made only to an installed mapping are replaced on rebuild; edit the repository mapping to carry those defaults into future builds.
 
 ### Remaining differences from `sample-react-python-project`
 
-- **External runtimes:** the portable Connector build starts the API and UI. Start Kokoro separately at the saved `kokoro_port`, or set `KOKORO_BASE_URL` to an external service; without healthy Kokoro, speech is unavailable and `/api/health` returns 503. Ollama also remains external. Python agents and plugins need an installed Python interpreter; set `CONNECTOR_PYTHON_EXECUTABLE` if it is not on PATH. C++ skills need a local compiler. The sample's simple counter has none of these extra runtime requirements.
+- **External runtimes:** the portable Connector build starts the API, UI, and bundled Kokoro. Ollama remains external. Python agents and plugins need an installed Python interpreter; set `CONNECTOR_PYTHON_EXECUTABLE` if it is not on PATH. C++ skills need a local compiler. The sample's simple counter has none of these extra runtime requirements.
 - **Settings fields:** Connector's mapping and user settings use `react_port`, `connector_port`, and `kokoro_port`; the sample uses `frontend_port` and `backend_port`. Connector uses `data_dir` for storage, while the sample uses `data_directory`. Both now share per-user settings and data across Debug and Release. Adapt the field names when borrowing sample configuration files; use separate `CONNECTOR_SETTINGS_PATH` and data overrides for independent Connector instances.
 - **Storage relocation:** saving a new folder requires restart and does not migrate existing data or named Python environments. Old standalone agent-environment folders are not automatically moved.
 - **Frontend validation:** Connector uses JavaScript and Node tests; the sample additionally supplies TypeScript checks and a Playwright browser suite. Connector does not currently have an equivalent browser end-to-end suite.
@@ -409,7 +415,7 @@ An optional `.env` beside `server.exe` supports the provider keys, storage overr
 
 ### Kokoro speech skill (required)
 
-Kokoro is a required Connector service. It remains isolated in its own Python 3.12 environment because its PyTorch dependencies differ from the main API. The development full-stack launchers start it alongside Connector at the selected speech port (8131 when available). The portable build connects to an independently configured Kokoro service.
+Kokoro is a required Connector service. It remains isolated in its own Python 3.12 environment because its PyTorch dependencies differ from the main API. The development full-stack launchers start it alongside Connector at the selected speech port (8131 when available). Both portable distributions include and automatically start their own isolated Kokoro executable.
 
 For speech requests, call the Connector at its printed API URL. The LAN development launcher also exposes Kokoro for direct clients; `run_default.bat` or `--local` keeps all three services on loopback.
 
@@ -482,7 +488,7 @@ Path("response.wav").write_bytes(speech.content)
 
 Omit the top-level `actor` to use one from the model response JSON, or the default voice when neither is supplied. Direct Kokoro clients can call `GET http://127.0.0.1:8131/v1/audio/voices` and send `{"input":"Hello.","voice":"am_michael"}` to `POST /v1/audio/speech`. The direct endpoint also accepts `actor` as an alias for `voice` (`voice` takes precedence), and defaults to `af_heart` when neither is supplied. The published voice IDs come from the [official Kokoro voice catalog](https://huggingface.co/hexgrad/Kokoro-82M/blob/main/VOICES.md); the selected voice determines the language when no explicit language is supplied.
 
-The first speech request may download the Kokoro model and language data. Configure the internal adapter in `.env` with `KOKORO_BASE_URL`, `KOKORO_VOICE`, `KOKORO_SPEED`, and `KOKORO_TIMEOUT`; restart the Connector after a change. Language follows the selected actor; `KOKORO_LANGUAGE` is no longer used. Non-English voices may require the corresponding optional Misaki language dependencies. The LAN launcher exposes both the Connector and Kokoro without inbound authentication. Restrict access to a trusted network or with a firewall or reverse proxy.
+Development speech may download the Kokoro model and language data on the first request. Portable builds include the model, voice files, and English phonemizer data, and the builder verifies English synthesis offline. Non-English voices may require the corresponding optional Misaki language dependencies. Configure the internal adapter in `.env` with `KOKORO_VOICE`, `KOKORO_SPEED`, and `KOKORO_TIMEOUT`; use `KOKORO_BASE_URL` only when supplying an external speech service. Restart the Connector after a change. Language follows the selected actor; `KOKORO_LANGUAGE` is no longer used. The LAN development launcher exposes both the Connector and Kokoro without inbound authentication. Restrict access to a trusted network or with a firewall or reverse proxy.
 
 ## Start a conversation
 

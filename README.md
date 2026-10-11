@@ -405,6 +405,14 @@ The packaged defaults in user settings are frontend **5130**, API **8130**, and 
 
 An optional `.env` beside `server.exe` supports the provider keys, storage overrides, and launcher settings. Ports come from the saved JSON, with CLI port flags taking precedence for that run. For the bind address, CLI options take precedence over process environment variables, then `.env`, then the generated `runtime.json` profile. Relative routing `CONFIG_PATH` and explicit storage paths resolve beside the executable. Rebuilding replaces application artifacts, including `port_mapping.json`, while preserving per-user settings and each folder's existing `.env`, `config.json`, and other user files. Changes made only to an installed mapping are replaced on rebuild; edit the repository mapping to carry those defaults into future builds.
 
+### Automated GitHub releases
+
+The [Build and release workflow](.github/workflows/release.yml) runs on every push to `main`, including merged pull requests. It can also be started manually from the Actions tab on `main`. Runs are queued so incoming merges do not cancel an active build.
+
+The workflow builds Windows x64 packages with CPU-only Kokoro, runs frontend and backend tests, and smoke-tests both portable packages before publishing a GitHub Release. Release tags and ZIP filenames use the UTC build time in `{YYYY}.{mm}.{dd}{HH}{mm}` format, with zero-padded fields and a 24-hour clock; for example, `2026.10.111430` is October 11, 2026 at 14:30 UTC.
+
+Each release includes `the-connector-<version>-windows-x64-cpu-debug.zip` for local access and `the-connector-<version>-windows-x64-cpu-release.zip` for LAN access. Extract the entire archive and start `run.bat` inside its `Debug` or `Release` folder. Releases target the exact commit that triggered the workflow and use the built-in `GITHUB_TOKEN`; no additional release secret is needed.
+
 ### Remaining differences from `sample-react-python-project`
 
 - **External runtimes:** the portable Connector build starts the API, UI, and bundled Kokoro. Ollama remains external. Python agents and plugins need an installed Python interpreter; set `CONNECTOR_PYTHON_EXECUTABLE` if it is not on PATH. C++ skills need a local compiler. The sample's simple counter has none of these extra runtime requirements.

@@ -1,0 +1,111 @@
+name: Build and release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Build and publish one release at a time without canceling queued builds.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  build:
+    name: Build Windows binaries
+    if: github.ref == 'refs/heads/main'
+    runs-on: windows-2022
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: pwsh
+    outputs:
+      version: ${{ steps.package.outputs.version }}
+    steps:
+      - name: Check out the merged commit
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+          architecture: x64
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          package-manager-cache: false
+
+      # The builder runs frontend tests and smoke-tests both portable packages.
+      # Hosted Windows runners have no CUDA GPU, so bundle CPU speech explicitly.
+      - name: Build and smoke-test portable packages
+        run: python -u build.py --kokoro-device cpu
+
+      - name: Test backend
+        run: .\.venv\Scripts\python.exe -m pytest backend/tests -q
+
+      - name: Version and archive portable packages
+        id: package
+        shell: python
+        run: |
+          import os
+          import shutil
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          version = datetime.now(timezone.utc).strftime("%Y.%m.%d%H%M")
+          for profile in ("Debug", "Release"):
+              package = Path("dist") / profile
+              for required in (
+                  "server.exe", "python-kokoro/kokoro.exe", "public/index.html",
+                  "run.bat", "runtime.json", "port_mapping.json", "config.json",
+              ):
+                  if not (package / required).is_file():
+                      raise FileNotFoundError(package / required)
+              archive = Path("dist") / f"the-connector-{version}-windows-x64-cpu-{profile.lower()}"
+              shutil.make_archive(str(archive), "zip", root_dir="dist", base_dir=profile)
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"version={version}\n")
+          print(f"Release version: {version} (UTC)")
+
+      - name: Upload release assets
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-binaries-${{ steps.package.outputs.version }}
+          path: dist/*.zip
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+  release:
+    name: Publish GitHub release
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - name: Download release assets
+        uses: actions/download-artifact@v8
+        with:
+          name: windows-binaries-${{ needs.build.outputs.version }}
+          path: dist
+
+      - name: Publish versioned binaries
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          gh release create "$VERSION" dist/*.zip \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "The Connector $VERSION" \
+            --generate-notes

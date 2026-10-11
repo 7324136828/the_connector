@@ -47,7 +47,7 @@ test('environment window includes managed creation controls', () => {
   assert.match(html, /Python execution environments/);
   assert.match(html, /Create a virtual environment/);
   assert.match(html, /Create environment/);
-  assert.match(html, /system temporary directory/);
+  assert.match(html, /configured data storage folder/);
 });
 
 test('export modal offers current, all, and confirmed clear-history actions', () => {

@@ -101,7 +101,7 @@ class KokoroDeviceTest(unittest.TestCase):
             self.assertEqual(server.parse_args(["--device", "cpu"]).device, "cpu")
 
     def test_default_port_is_the_isolated_backend_port(self):
-        self.assertEqual(server.parse_args([]).port, 8302)
+        self.assertEqual(server.parse_args([]).port, 8131)
 
 
 class FakeService:

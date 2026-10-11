@@ -59,5 +59,5 @@ if ($Device -eq "cuda") {
     }
 }
 
-Write-Host "Run .\run_kokoro.bat -Device $Device to start the standalone Python 3.12 speech service on port 8302."
+Write-Host "Run .\run_kokoro.bat -Device $Device to start the standalone Python 3.12 speech service on port 8131."
 Write-Host "The first speech request may download the Kokoro model and English language data."

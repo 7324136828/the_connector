@@ -73,7 +73,7 @@ export function PythonEnvironmentModal({ isOpen, onClose, onSelectionChange }) {
                 {loading ? 'Working…' : 'Create environment'}
               </button>
             </div>
-            <p>New environments are created under the system temporary directory and selected automatically.</p>
+            <p>New environments are created under the configured data storage folder and selected automatically. Change the folder in Settings.</p>
           </section>
 
           <section className="venv-list" aria-label="Available Python environments">

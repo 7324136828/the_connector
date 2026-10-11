@@ -13,13 +13,14 @@ import socket
 import sqlite3
 import stat
 import subprocess
-import sys
 import tempfile
 import threading
 import time
 import tomllib
 import urllib.request
 import zipfile
+
+from ..python_runtime import runtime_python_executable
 
 MAX_ZIP_BYTES = 10 * 1024 * 1024
 MAX_EXTRACTED_BYTES = 50 * 1024 * 1024
@@ -192,7 +193,7 @@ class PluginManager:
         environment = folder / ".venv"
         python = environment / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
         if not (environment / "ready").exists() or not python.is_file():
-            self._run([sys.executable, "-m", "venv", "--without-pip", str(environment)], folder)
+            self._run([runtime_python_executable(), "-m", "venv", "--without-pip", str(environment)], folder)
             requirements = folder / "backend/requirements.txt"
             project = tomllib.loads((folder / "backend/pyproject.toml").read_text(encoding="utf-8"))
             dependencies = project.get("project", {}).get("dependencies", [])

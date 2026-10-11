@@ -1,5 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import { VoiceActorSetting } from './VoiceActorSetting';
+import { DataStorageSetting } from './DataStorageSetting';
 
 export function SettingsModal({
   isOpen, onClose, disabled, hasConfig,
@@ -48,6 +49,7 @@ export function SettingsModal({
           <button type="button" className="config-close" aria-label="Close settings" onClick={onClose}>×</button>
         </div>
         <div className="modal-body settings-controls">
+          <DataStorageSetting disabled={disabled} />
           <VoiceActorSetting
             actor={speechActor} onChange={onSpeechActorChange}
             voices={speechVoices} defaultActor={speechDefaultActor}

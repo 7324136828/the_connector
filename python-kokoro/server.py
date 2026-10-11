@@ -301,7 +301,7 @@ def create_server(host: str, port: int, device: str) -> ThreadingHTTPServer:
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Serve official Kokoro from Python 3.12")
     parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=8302)
+    parser.add_argument("--port", type=int, default=8131)
     parser.add_argument(
         "--device",
         choices=("auto", "cpu", "cuda"),

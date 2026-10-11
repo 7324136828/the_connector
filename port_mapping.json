@@ -1,0 +1,5 @@
+{
+  "react_port": 5130,
+  "connector_port": 8130,
+  "kokoro_port": 8131
+}

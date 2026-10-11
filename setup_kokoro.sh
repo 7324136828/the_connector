@@ -23,4 +23,4 @@ else
 fi
 "$service_python" -m pip install -r python-kokoro/requirements.txt
 "$service_python" -c "import kokoro, torch; print('Kokoro environment ready; PyTorch', torch.__version__)"
-echo "Run ./run_kokoro.sh to start Kokoro on http://127.0.0.1:8302."
+echo "Run ./run_kokoro.sh to start Kokoro on http://127.0.0.1:8131."

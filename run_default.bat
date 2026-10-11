@@ -1,4 +1,4 @@
 @echo off
-rem Local launch: UI 5130, API 8301, Kokoro 8302.
-call "%~dp0run_lan.bat" -Local %*
+rem Local launch; choose available ports starting at the saved settings.json ports.
+call "%~dp0run.bat" --local %*
 exit /b %errorlevel%

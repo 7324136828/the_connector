@@ -75,6 +75,7 @@ from .api.configurations import router as configurations_api, detail_router as c
 from .api.configuration_history import router as configuration_history_api
 from .api.compatibility import router as compatibility_api, CompatibilityError, error_response
 from .api.plugins import router as plugins_api, PluginFrameCORSMiddleware
+from .api.settings import router as settings_api
 from .services.plugin_manager import PluginManager
 from starlette.concurrency import run_in_threadpool
 
@@ -127,6 +128,7 @@ app.include_router(configuration_detail_api)
 app.include_router(configuration_history_api)
 app.include_router(compatibility_api)
 app.include_router(plugins_api)
+app.include_router(settings_api)
 
 
 @app.exception_handler(CompatibilityError)

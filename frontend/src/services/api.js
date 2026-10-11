@@ -1,6 +1,9 @@
 ﻿/** API calls use the configuration saved with each session. */
 const BASE_URL = '/api';
 
+export function getSettings() { return request('/settings'); }
+export function updateSettings(changes) { return request('/settings', { method: 'PATCH', body: changes }); }
+
 export function getPlugins() { return request('/plugins'); }
 export function enablePlugin(id) { return request(`/plugins/${encodeURIComponent(id)}/enable`, { method: 'POST' }); }
 export function disablePlugin(id) { return request(`/plugins/${encodeURIComponent(id)}/disable`, { method: 'POST' }); }

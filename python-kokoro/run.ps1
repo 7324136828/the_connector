@@ -2,7 +2,7 @@ param(
     [ValidateSet("auto", "cpu", "cuda")]
     [string]$Device = "auto",
     [ValidateRange(1, 65535)]
-    [int]$Port = 8302,
+    [int]$Port = 8131,
     [switch]$Foreground,
     [switch]$Restart
 )

@@ -2,18 +2,19 @@
 
 from __future__ import annotations
 
-import tempfile
+import os
 from pathlib import Path
 from typing import List
-from pydantic import Field, field_validator, model_validator
+from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from .storage import prepare_database
+from .user_settings import default_data_directory, initialize_port_settings, resolve_data_directory, settings_file_path
 
-# Root directory of the whole repository
-ROOT_DIR = Path(__file__).resolve().parent.parent.parent
+# Repository root, or the installed folder selected by the portable launcher.
+ROOT_DIR = Path(os.environ.get("CONNECTOR_RUNTIME_ROOT") or Path(__file__).resolve().parent.parent.parent).resolve()
 BACKEND_DIR = ROOT_DIR / "backend"
-DATA_DIR = Path(tempfile.gettempdir()) / "the_connector"
+DATA_DIR = default_data_directory()
 DEFAULT_DB_PATH = DATA_DIR / "connector.db"
 LEGACY_DB_PATH = BACKEND_DIR / "data" / "connector.db"
 DEFAULT_CONFIG_PATH = ROOT_DIR / "config.json"
@@ -28,7 +29,7 @@ class Settings(BaseSettings):
     debug: bool = Field(default=False, validation_alias="CONNECTOR_DEBUG")
     cors_origins: List[str] = ["*"]
     host: str = "0.0.0.0"
-    port: int = 8301
+    port: int = 8130
 
     # Provider API Keys
     openai_api_key: str = ""
@@ -46,7 +47,7 @@ class Settings(BaseSettings):
     config_path: Path = DEFAULT_CONFIG_PATH
 
     # Isolated Kokoro text-to-speech service
-    kokoro_base_url: str = "http://127.0.0.1:8302"
+    kokoro_base_url: str = "http://127.0.0.1:8131"
     kokoro_voice: str = "af_heart"
     kokoro_speed: float = Field(default=1.0, ge=0.5, le=2.0)
     kokoro_timeout: float = Field(default=120.0, gt=0)
@@ -61,11 +62,16 @@ class Settings(BaseSettings):
     # Storage paths
     data_dir: Path = DATA_DIR
     db_path: Path = DEFAULT_DB_PATH
-    agent_python_env_dir: Path = Path(tempfile.gettempdir()) / "the_connector_python"
-    agent_python_envs_dir: Path = Path(tempfile.gettempdir()) / "the_connector_python_envs"
+    agent_python_env_dir: Path = DATA_DIR / "python"
+    agent_python_envs_dir: Path = DATA_DIR / "python_envs"
     plugin_dir: Path = DATA_DIR / "plugins"
+    jobs_dir: Path = DATA_DIR / "jobs"
+    settings_path: Path = Field(
+        default_factory=settings_file_path, exclude=True,
+        validation_alias=AliasChoices("CONNECTOR_SETTINGS_PATH", "SETTINGS_PATH", "settings_path"),
+    )
 
-    # Response diagnostics live in system temp, independently of DB_PATH.
+    # Response diagnostics follow the data folder, independently of DB_PATH.
     completion_no_database_access: bool = False
     response_logging_enabled: bool = True
     response_log_dir: Path = DATA_DIR / "logs"
@@ -78,17 +84,31 @@ class Settings(BaseSettings):
     internal_audit_max_entries: int = Field(default=5, ge=1, le=1000)
 
     @model_validator(mode="after")
-    def resolve_database_path(self):
-        # DATA_DIR remains a supported override; an explicit DB_PATH wins.
+    def resolve_storage_paths(self):
+        preferences = initialize_port_settings(self.settings_path)
+        self.port = preferences["connector_port"]
+        if "kokoro_base_url" not in self.model_fields_set:
+            self.kokoro_base_url = f"http://127.0.0.1:{preferences['kokoro_port']}"
+        # Environment and constructor overrides take precedence over user JSON.
+        if "data_dir" not in self.model_fields_set:
+            self.data_dir = resolve_data_directory(preferences.get("data_dir", ""))
+        else:
+            self.data_dir = resolve_data_directory(str(self.data_dir))
         if "db_path" not in self.model_fields_set:
             self.db_path = self.data_dir / "connector.db"
-        if "plugin_dir" not in self.model_fields_set:
-            self.plugin_dir = self.data_dir / "plugins"
+        for field, subdirectory in (
+            ("plugin_dir", "plugins"), ("response_log_dir", "logs"),
+            ("agent_python_env_dir", "python"), ("agent_python_envs_dir", "python_envs"),
+            ("jobs_dir", "jobs"),
+        ):
+            if field not in self.model_fields_set:
+                setattr(self, field, self.data_dir / subdirectory)
         return self
 
     model_config = SettingsConfigDict(
         env_file=ROOT_DIR / ".env",
         env_file_encoding="utf-8",
+        env_ignore_empty=True,
         extra="ignore",
     )
 

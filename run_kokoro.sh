@@ -8,4 +8,4 @@ if [[ ! -x "$service_python" ]]; then
     exit 1
 fi
 
-exec "$service_python" -u python-kokoro/server.py --host 127.0.0.1 --port 8302 "$@"
+exec "$service_python" -u python-kokoro/server.py --host 127.0.0.1 --port 8131 "$@"

@@ -1,26 +1,72 @@
 param(
     [switch]$Local,
     [Alias("completion-no-database-access")][switch]$CompletionNoDatabaseAccess,
+    [Alias("host")][string]$BindHost,
+    [switch]$Reload,
+    [switch]$NoReload,
+    [Alias("frontend-port")]
     [ValidateRange(1, 65535)][int]$UiPort = 5130,
-    [ValidateRange(1, 65535)][int]$BackendPort = 8301,
-    [ValidateRange(1, 65535)][int]$KokoroPort = 8302
+    [Alias("backend-port")]
+    [ValidateRange(1, 65535)][int]$BackendPort = 8130,
+    [Alias("kokoro-port")]
+    [ValidateRange(1, 65535)][int]$KokoroPort = 8131,
+    [string]$PythonExecutable
 )
 
 $ErrorActionPreference = "Stop"
 $root = $PSScriptRoot
-$publicHost = if ($Local) { "127.0.0.1" } else { "0.0.0.0" }
+if ($Local -and $BindHost) {
+    throw "Use either -Local or -BindHost, not both."
+}
+$backendPython = Join-Path $root ".venv\Scripts\python.exe"
+if ($PythonExecutable) {
+    $backendPython = $PythonExecutable
+}
+elseif ($env:VIRTUAL_ENV) {
+    $backendPython = Join-Path $env:VIRTUAL_ENV "Scripts\python.exe"
+}
+elseif ($env:CONDA_PREFIX) {
+    $backendPython = Join-Path $env:CONDA_PREFIX "python.exe"
+}
+if (-not (Test-Path -LiteralPath $backendPython)) {
+    throw "Backend Python environment is missing. Run setup.bat first."
+}
+if ($Reload -and $NoReload) {
+    throw "Use either -Reload or -NoReload, not both."
+}
+
+# Share host resolution, busy-port fallback, and interface discovery with run.sh.
+$planningArguments = @("--print-plan-json")
+if ($Local) { $planningArguments += "--local" }
+elseif ($BindHost) { $planningArguments += @("--host", $BindHost) }
+if ($PSBoundParameters.ContainsKey("UiPort")) { $planningArguments += @("--frontend-port", [string]$UiPort) }
+if ($PSBoundParameters.ContainsKey("BackendPort")) { $planningArguments += @("--backend-port", [string]$BackendPort) }
+if ($PSBoundParameters.ContainsKey("KokoroPort")) { $planningArguments += @("--kokoro-port", [string]$KokoroPort) }
+$planText = (& $backendPython (Join-Path $root "run.py") @planningArguments) -join [Environment]::NewLine
+if ($LASTEXITCODE -ne 0) { throw "Could not select the service bind address and ports." }
+$plan = $planText | ConvertFrom-Json
+$publicHost = [string]$plan.host
 $kokoroHost = $publicHost
+$UiPort = [int]$plan.ports.frontend
+$BackendPort = [int]$plan.ports.backend
+$KokoroPort = [int]$plan.ports.kokoro
+foreach ($name in @("backend", "frontend", "kokoro")) {
+    if ($plan.ports.$name -ne $plan.requested_ports.$name) {
+        Write-Host "[RUN] $name port $($plan.requested_ports.$name) is busy or reserved; using $($plan.ports.$name)."
+    }
+}
 
 Write-Host "========================================================"
 Write-Host "Starting The Connector Full-Stack Services"
-Write-Host "Frontend: http://$($publicHost):$UiPort"
-Write-Host "Backend:  http://$($publicHost):$BackendPort (API and /docs)"
-Write-Host "Kokoro:  http://$($kokoroHost):$KokoroPort (speech backend)"
+Write-Host "Frontend: $($plan.urls.frontend)"
+Write-Host "Backend:  $($plan.urls.backend) (API docs: $($plan.urls.backend)/docs)"
+Write-Host "Kokoro:   $($plan.urls.kokoro) (speech backend)"
+foreach ($url in $plan.lan_urls.frontend) { Write-Host "LAN:      $url" }
+foreach ($url in $plan.lan_urls.backend) { Write-Host "LAN API:  $url/docs" }
+foreach ($url in $plan.lan_urls.kokoro) { Write-Host "LAN TTS:  $url/health" }
 Write-Host "========================================================"
-if (-not $Local) {
-    Write-Host "From another device, replace 0.0.0.0 with this PC's LAN IP address."
-    Write-Host "Test API: http://<LAN-IP>:$BackendPort/api/health"
-    Write-Host "Test Kokoro: http://<LAN-IP>:$KokoroPort/health"
+if ($plan.lan_urls.frontend.Count -gt 0) {
+    Write-Host "Open a LAN URL on another device connected to the same network."
 }
 
 # Put this supervisor in a Windows job whose members are killed when the
@@ -189,7 +235,6 @@ function Stop-ConnectorProcesses {
 
 $exitCode = 0
 try {
-    $backendPython = Join-Path $root ".venv\Scripts\python.exe"
     $kokoroPython = Join-Path $root "python-kokoro\.venv\Scripts\python.exe"
     $kokoroScript = Join-Path $root "python-kokoro\server.py"
     $node = (Get-Command "node.exe" -ErrorAction Stop).Source
@@ -200,9 +245,17 @@ try {
     }
 
     $env:CONNECTOR_BACKEND_PORT = [string]$BackendPort
-    $env:KOKORO_BASE_URL = "http://127.0.0.1:$KokoroPort"
+    $env:CONNECTOR_BACKEND_URL = [string]$plan.urls.backend
+    $env:VITE_BACKEND_URL = [string]$plan.urls.backend
+    $env:KOKORO_BASE_URL = [string]$plan.urls.kokoro
+    if ($plan.PSObject.Properties.Name -contains "cors_origins") {
+        $env:CORS_ORIGINS = [string]$plan.cors_origins
+    }
 
-    $backendArguments = @("run_backend.py", "--host", $publicHost, "--port", [string]$BackendPort)
+    $backendArguments = @("run_backend.py", "--host", $publicHost, "--port", [string]$BackendPort, "--strict-port")
+    if (-not $NoReload) {
+        $backendArguments += "--reload"
+    }
     if ($CompletionNoDatabaseAccess) {
         $backendArguments += "--completion-no-database-access"
     }

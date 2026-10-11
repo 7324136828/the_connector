@@ -1,4 +1,4 @@
-﻿# The Connector
+# The Connector
 
 A React and FastAPI chat application connecting OpenAI, Claude, Gemini, OpenRouter, Ollama, and a local mock provider, with a required isolated Kokoro speech backend. Save named routing configurations and expose active entries as OpenAI-compatible models for Hermes or other agent clients. Web chat sessions retain their own `config.json` snapshots, including routing, effort, system prompt, and memory settings.
 
@@ -32,10 +32,11 @@ Java and C++ runtime installation is not implemented yet.
 
 Plugin files, environments, and `backend.log` are stored under
 `%TEMP%/the_connector/plugins/<plugin_id>` by default (the system temp directory
-on other platforms). `DATA_DIR` changes the default containing directory; an
-explicit `PLUGIN_DIR` in `.env` overrides it. As with the default chat database,
-system temp cleanup can remove these files. For long-term retention, choose a
-persistent `PLUGIN_DIR` and `DB_PATH` and back them up together.
+on other platforms). The **Data storage folder** in Settings changes the
+containing directory; `DATA_DIR` overrides that preference, and an explicit
+`PLUGIN_DIR` in `.env` overrides the plugin location. As with the default chat
+database, system temp cleanup can remove these files. For long-term retention,
+choose a persistent data folder and back up the database and plugins together.
 
 Plugins execute trusted code as the Connector's operating-system user. The
 virtual environment separates Python dependencies; it is not an operating
@@ -112,8 +113,9 @@ Extract this plugin into its own folder and run `run.bat` on Windows or
 together without third-party runtime dependencies. Start Connector at least
 once so its SQLite database exists. The plugin reads the database in read-only
 mode, using `DB_PATH`, `DATA_DIR`, or Connector's default temp location. If the
-Connector sets a custom path in `.env`, supply the same path with `--db-path`;
-the standalone plugin does not load the host `.env` automatically.
+Connector selects a custom folder in Settings or sets a custom path in `.env`,
+supply its database path with `--db-path`; the standalone plugin does not load
+the host settings file or `.env` automatically.
 
 Counts include nonblank `user` and `assistant` messages in active and closed
 web sessions. System sessions are excluded by default and can be included
@@ -130,8 +132,8 @@ and call `update` when the selected session changes and `unmount` when removing
 it. The [instructions](plugin/count_message/instruction.md) include a React
 adapter and standalone npm preview commands.
 
-With Connector running, `run.bat --register http://127.0.0.1:8301` or
-`sh run.sh --register http://127.0.0.1:8301` installs the plugin as an agent
+With Connector running, `run.bat --register http://127.0.0.1:8130` or
+`sh run.sh --register http://127.0.0.1:8130` installs the plugin as an agent
 webhook using the existing `/api/agent/register-tool` endpoint. Keep the plugin
 running; registration must be repeated after Connector restarts when using
 this manual standalone mode. npm installation alone does not add a UI panel.
@@ -146,7 +148,7 @@ python plugin/count_message/build_plugin.py --output plugin.zip
 
 ## Run the backend only
 
-For Hermes or API clients, Node and the frontend are not required, but both the Connector API environment and the required Python 3.12 Kokoro environment must be installed. Run these commands from the repository directory.
+For Hermes or API clients, Node and the frontend are not required. Install the Connector API environment with Python 3.11+ and the separate Python 3.12 Kokoro environment for speech and healthy readiness checks. The core API can run without Kokoro, but `/api/health` then reports HTTP 503. Run these commands from the repository directory.
 
 Windows Command Prompt:
 
@@ -155,7 +157,7 @@ py -m venv .venv
 .venv\Scripts\python.exe -m pip install -r backend\requirements.txt
 if not exist .env copy .env.example .env
 setup_kokoro.bat -Device cpu
-start "The Connector Kokoro Speech" cmd /k "call run_kokoro.bat"
+start "The Connector Kokoro Speech" cmd /k "call run_kokoro.bat -Port 8131"
 run_backend.bat
 ```
 
@@ -166,11 +168,11 @@ python3 -m venv .venv
 .venv/bin/python -m pip install -r backend/requirements.txt
 test -f .env || cp .env.example .env
 bash setup_kokoro.sh cpu
-bash run_kokoro.sh &
+bash run_kokoro.sh --port 8131 &
 bash run_backend.sh
 ```
 
-The Connector API defaults to **http://127.0.0.1:8301**, with interactive documentation at **http://127.0.0.1:8301/docs** and the OpenAI base URL **http://127.0.0.1:8301/v1**. The internal Kokoro process defaults to **http://127.0.0.1:8302**. The batch and shell wrappers prefer their respective repository virtual environments. Stop both processes when finished.
+The Connector API uses `connector_port` from the user settings JSON (**8130** by default), choosing the next free port if necessary and printing the actual API and LAN URLs. It binds to `BACKEND_HOST`, then `HOST`, or `0.0.0.0` by default. Add `--local` for loopback access; with the default free port, the API documentation is **http://127.0.0.1:8130/docs** and the OpenAI base URL is **http://127.0.0.1:8130/v1**. Connector's default Kokoro URL is **http://127.0.0.1:8131**, using the saved `kokoro_port` unless `KOKORO_BASE_URL` specifies an external service. Start the separate speech process at the same port. The batch and shell wrappers prefer their respective repository virtual environments. Stop both processes when finished.
 
 Add credentials for the upstream providers you intend to use to `.env`, then restart the backend:
 
@@ -182,21 +184,21 @@ OPENROUTER_API_KEY=your-key-here
 OLLAMA_HOST=http://localhost:11434
 ```
 
-The launcher loads the repository `.env` without replacing existing environment variables. The local gateway does not authenticate inbound API requests; SDK clients can use `local-placeholder` as their required API key. Actual upstream keys are read by the backend. Keep the default loopback binding for local use.
+The launcher loads the repository `.env` without replacing existing environment variables. The gateway does not authenticate inbound API requests; SDK clients can use `local-placeholder` as their required API key. Actual upstream keys are read by the backend. Use `--local` for local access.
 
-The backend-only launchers accept `--host`, `--port`, and `--reload`:
+The backend-only launchers accept `--host`, `--local`, `--port`, `--strict-port`, and `--reload`:
 
 ```cmd
-run_backend.bat --port 8401 --reload
+run_backend.bat --local --port 8401 --reload
 ```
 
 ```bash
-bash run_backend.sh --port 8401 --reload
+bash run_backend.sh --local --port 8401 --reload
 # Equivalent with an activated Python environment:
 python run_backend.py --host 127.0.0.1 --port 8401 --reload
 ```
 
-`--reload` is for backend development. Changing the port also requires updating client base URLs.
+`--reload` is for backend development. `--strict-port` fails if the requested port is busy; otherwise the launcher tries the next free port. Use the printed port in client base URLs.
 
 To avoid database access during compatible completion requests, launch with:
 
@@ -208,13 +210,51 @@ To avoid database access during compatible completion requests, launch with:
 
 You can also set `COMPLETION_NO_DATABASE_ACCESS=true` in `.env`. In this mode, all four chat completion aliases use routing configurations cached at startup, skip saved memory and daily summary refreshes, and skip both `completions_response` persistence and internal database auditing, including streamed responses and failed requests. Configuration changes made through this backend update the cache; changes made by another process require a restart. Startup, configuration management, model discovery, and ordinary session/agent chat still use the database. JSONL request/response file logging remains controlled by `RESPONSE_LOGGING_ENABLED`.
 
-### Database location
+### Settings and data storage
 
-Sessions, conversation memory, saved configurations, and configuration history share a SQLite database in the system temp directory. On Windows the default is **`%TEMP%\the_connector\connector.db`**; on other systems it is `tempfile.gettempdir()/the_connector/connector.db`. The folder and filename stay the same across restarts; this is separate from the disposable per-session export folders.
+The application ID is `the_connector`. Connector uses **`%APPDATA%\the_connector\settings.json`** on Windows. On Linux/macOS it uses `$XDG_CONFIG_HOME/the_connector/settings.json`, or `~/.config/the_connector/settings.json` when `XDG_CONFIG_HOME` is unset. Set `CONNECTOR_SETTINGS_PATH` to use a different preferences file. When the file is absent, the launcher first creates an empty JSON object (`{}`), then adds missing port fields from [port_mapping.json](port_mapping.json). The current project defaults are:
+
+```json
+{
+  "react_port": 5130,
+  "connector_port": 8130,
+  "kokoro_port": 8131
+}
+```
+
+Development reads `port_mapping.json` from the repository root. Portable builds read the copy beside `server.exe`, regardless of the working directory. The mapping is validated before builds and startup. Existing settings values and unrelated user fields are preserved: each launch fills only missing port fields and rereads the user JSON before selecting ports. Edit `react_port`, `connector_port`, or `kokoro_port` in **settings.json** to change your preferred ports, then restart. Ports must be integers between 1 and 65535. Launchers use the saved JSON ports; explicit command-line port flags override them for that run.
+
+Edit the root **port_mapping.json** to change defaults for development and future builds. Rebuilding copies it into Debug and Release as an application artifact. Updating the mapping does not overwrite ports already saved in a user's settings; it supplies defaults only for missing fields. To adopt an installed mapping's new default, remove that individual port field from settings.json and restart, leaving storage and other preferences intact.
+
+The optional `data_dir` field may be absent or empty to use **`%TEMP%\the_connector`** on Windows, or `tempfile.gettempdir()/the_connector` on other systems. Open **Settings → Data storage folder** to save an absolute folder on the machine running Connector, or add/edit `data_dir` in the JSON while retaining your port settings, for example:
+
+```json
+{
+  "react_port": 5130,
+  "connector_port": 8130,
+  "kokoro_port": 8131,
+  "data_dir": "D:/Connector Data"
+}
+```
+
+Environment-variable paths such as `%USERPROFILE%/Connector Data` and `~` are supported. **Restart Connector after saving.** The UI displays the active folder, saved folder, and settings-file path. Clearing the field restores the default temp folder. API clients can read `GET /api/settings` and save `PATCH /api/settings` with `{"data_dir":"D:/Connector Data"}`; these endpoints persist the preference without changing running storage services.
+
+The selected data folder contains:
+
+| Path | Contents | Explicit environment override |
+| --- | --- | --- |
+| `connector.db` | Sessions, memory, configurations, skills, plugin metadata, and audit records | `DB_PATH` |
+| `plugins/` | Installed plugin files, environments, and logs | `PLUGIN_DIR` |
+| `logs/` | Request, response, and routing JSONL logs | `RESPONSE_LOG_DIR` |
+| `python/` | Default agent Python environment | `AGENT_PYTHON_ENV_DIR` |
+| `python_envs/` | Newly created named Python environments | `AGENT_PYTHON_ENVS_DIR` |
+| `jobs/` | Disposable session/export folders | `JOBS_DIR` |
+
+`DATA_DIR` in the process environment or `.env` overrides the JSON folder preference. Each explicit path override in the table takes precedence for its own storage. Environment variables already set in the terminal take precedence over `.env`. Without an override, the database defaults to **`%TEMP%\the_connector\connector.db`** and the folder stays the same across restarts.
 
 On the first start with this default location, an existing `backend/data/connector.db` is copied with SQLite's backup API, including committed changes in its write-ahead log. The old file is retained as a backup. An existing database at the new location is never overwritten or merged automatically. New installations do not create a database under the project.
 
-System temp cleanup can remove this database. Keep a backup if you need long-term retention. To choose another location, set `DB_PATH` in `.env`, for example `DB_PATH=C:/Users/your-name/Connector/connector.db`, and restart. An explicit `DB_PATH` takes precedence; `DATA_DIR` can alternatively set the containing directory. Automatic migration from the old project path applies only to the default temp database.
+Changing the folder does **not** move existing data. Stop Connector and back up/copy the existing database and plugin files if you want to retain them in the new folder. Named Python environment records retain absolute paths; recreate those environments after relocating storage instead of assuming that copying the database relocates them. The old `%TEMP%\the_connector_python` and `%TEMP%\the_connector_python_envs` environments are not automatically moved to the new layout. Automatic database migration from the old project path applies only to the default temp database. System temp cleanup can remove default data; use a persistent folder and backups for long-term retention.
 
 ### Request, response, and routing diagnostics
 
@@ -249,7 +289,7 @@ The same record is appended to **`internal_api_audit`** in the existing memory S
 
 This is application-level separation, not filesystem access control: the server account and tools with that account's filesystem permissions (including the existing Python execution tool) can read the database. The local application does not isolate records from machine administrators or arbitrary code running as the server.
 
-Each endpoint file rotates before an append would take it above 10 MiB, retaining five numbered backups (`.jsonl.1` through `.jsonl.5`, newest first). One complete response can exceed that target size and is kept together on one line. File locking protects appends and rotation across concurrent requests and backend processes. Logs remain separate from the database even when `DB_PATH` or `DATA_DIR` is customized.
+Each endpoint file rotates before an append would take it above 10 MiB, retaining five numbered backups (`.jsonl.1` through `.jsonl.5`, newest first). One complete response can exceed that target size and is kept together on one line. File locking protects appends and rotation across concurrent requests and backend processes. Logs follow the selected data folder under `logs/`; an explicit `RESPONSE_LOG_DIR` overrides that location. Changing only `DB_PATH` does not change the log folder.
 
 Optional `.env` settings (restart after changing them):
 
@@ -274,15 +314,104 @@ Get-Content -LiteralPath "$env:TEMP\the_connector\logs\post_api_chat_completions
 
 ## Run the full application
 
-For the web UI, run `setup.bat` then `run_default.bat` (or `run.bat`) on Windows. Use `run_lan.bat` to let other devices on the LAN reach the UI at `http://<your-computer-ip>:5130`, the API at `http://<your-computer-ip>:8301`, and Kokoro health at `http://<your-computer-ip>:8302/health`. On Linux/macOS, run `chmod +x setup.sh run.sh`, then `./setup.sh` and `./run.sh`. Python 3.12 is required. Setup installs the main Python environment, frontend dependencies, and the separate Kokoro environment; Kokoro uses the CPU build by default. Select CUDA explicitly with `setup.bat --kokoro-device cuda` or `./setup.sh --kokoro-device cuda`. The local Windows launch uses frontend **http://localhost:5130**, the Connector API at **http://localhost:8301**, and Kokoro at **http://localhost:8302**. Vite proxies `/api` to port 8301. On Windows all three services share one console; press Ctrl+C or close that window to stop the full stack. The LAN launcher binds all three services to `0.0.0.0`; restart it after switching from the local launcher. Allow inbound TCP ports 5130, 8301, and 8302 in the firewall if needed. The API has no inbound authentication, so use the LAN launcher only on a network you trust.
+Windows:
 
-The Windows launchers accept PowerShell port overrides, for example `run_default.bat -UiPort 5131 -BackendPort 8401`. `run_default.bat` forwards its arguments to `run_lan.bat` with local binding selected. The backend proxy and Kokoro URL follow the selected ports. On another device, use the computer's LAN IP address, never `localhost` or `0.0.0.0`. Check `http://<LAN-IP>:8301/api/health` and `http://<LAN-IP>:8302/health` after starting `run_lan.bat`.
+```powershell
+.\setup.bat
+.\run.bat
+# Local-only alternative:
+.\run_default.bat
+```
+
+Linux/macOS:
+
+```bash
+chmod +x setup.sh run.sh
+./setup.sh
+./run.sh
+# Local-only alternative:
+./run.sh --local
+```
+
+Setup installs the Python 3.11+ API dependencies, frontend dependencies, and the separate Python 3.12 Kokoro environment. Kokoro uses the CPU build by default; select CUDA explicitly with `setup.bat --kokoro-device cuda` or `./setup.sh --kokoro-device cuda`. An active Python virtual environment or Conda environment takes precedence for the API; otherwise the runner uses the repository `.venv`. Full-stack launchers run setup if a required Python environment is missing.
+
+### LAN access and development ports
+
+`run.bat`, `run_lan.bat`, and `run.sh` use the shared `run.py` launcher. The default bind address is `BACKEND_HOST`, then `HOST`, or `0.0.0.0`, making all three services available on the host's network interfaces. `run_default.bat` selects loopback; `--local` or `--host 127.0.0.1` also limits access to this machine. `--host` takes precedence over environment settings. Existing `.env` files keep their values, so an existing loopback host must be changed to enable LAN access.
+
+The launcher reads preferred ports from `settings.json`, filling missing fields from the root `port_mapping.json`: `react_port` **5130**, `connector_port` **8130**, and `kokoro_port` **8131** with the current mapping. It advances to the next free distinct port when one is busy. It starts its own Kokoro process even if another speech service is already running. The frontend proxy and speech adapter use the ports selected for this run. Startup prints the actual local URLs and each detected IPv4 LAN URL, including virtual adapters. Open the frontend `LAN` URL on another device connected to the same network; use the address of the adapter connected to that device.
+
+```powershell
+.\run_lan.bat --frontend-port 5131 --backend-port 8401 --kokoro-port 8402
+.\run.bat --host 192.168.1.156 --no-reload
+# Direct PowerShell launch also supports its existing parameter names:
+.\run.ps1 -Local -UiPort 5131 -BackendPort 8401 -KokoroPort 8402
+```
+
+The Python/batch launchers also accept the existing `-Local`, `-UiPort`, `-BackendPort`, and `-KokoroPort` names. Backend reload is enabled by default for development; `--no-reload` disables it. On Windows, all three services share one console and closing it stops the stack; Ctrl+C stops the services on all platforms.
+
+| Setting | Default | Purpose |
+| --- | --- | --- |
+| `BACKEND_HOST` (or `HOST`) | `0.0.0.0` | Bind address for frontend, API, and Kokoro |
+| `connector_port` in `settings.json` | `8130` | Preferred API port |
+| `react_port` in `settings.json` | `5130` | Preferred frontend port |
+| `kokoro_port` in `settings.json` | `8131` | Preferred speech port |
+
+Vite forwards `/api` and `/v1` requests to the selected API address, so remote browsers need no IP-specific configuration. Use `/api/health` or `/api/speech/health` on the printed API or frontend URL to check readiness. If a firewall blocks LAN access, allow the running Python/Node processes on your private network; use the selected ports when adding port rules. Guest-network client isolation can also prevent connections. The API and direct Kokoro service have no inbound authentication, so use LAN access on a trusted network.
+
+### Portable Windows build
+
+Build on Windows with Python 3.11+ and Node.js/npm installed (the development speech environment requires Python 3.12):
+
+```powershell
+.\build.bat
+# Equivalent:
+python build.py
+# Reuse installed build dependencies:
+.\build.bat --skip-install
+```
+
+The builder validates the root `port_mapping.json`, uses the active Python environment or the repository `.venv`, installs API/PyInstaller and npm dependencies, runs frontend tests, builds React, and packages the API with PyInstaller. It copies the validated mapping into both distributions and checks the executable's frontend and proxied API with isolated test storage before publishing:
+
+```text
+dist/
+  Debug/                  Default host: 127.0.0.1
+    server.exe            Packaged API and frontend static server
+    public/               Built React assets
+    run.bat               Distribution launcher
+    runtime.json          Default bind address
+    port_mapping.json     Defaults for missing user port settings
+    config.json           Editable routing example
+  Release/                Default host: 0.0.0.0 (LAN)
+    ...                   Same application and layout
+```
+
+Copy the entire chosen folder to another Windows machine, including `port_mapping.json`. The core API and web UI run without installing Python or Node.js on that machine. The built `run.bat` first calls `server.exe --initialize-settings` to validate the sidecar mapping, create the user settings file if absent, and add only missing port defaults. It then starts the application, which rereads the user JSON to select ports. Initialization preserves existing user settings and stops the launcher if the mapping or settings are invalid. Start either distribution with:
+
+```powershell
+.\dist\Debug\run.bat
+.\dist\Release\run.bat --frontend 4000 --backend 9000
+# --frontend-port and --backend-port are aliases; --host overrides the profile.
+.\dist\Release\run.bat --host 127.0.0.1
+```
+
+The packaged defaults in user settings are frontend **5130**, API **8130**, and external Kokoro **8131**. The executable starts only the frontend and API listeners; it connects to Kokoro using the saved `kokoro_port` at `http://127.0.0.1:<port>` unless an explicit `KOKORO_BASE_URL` points to another service. Packaged frontend/API ports must be distinct and available; the executable reports a busy port instead of automatically advancing it. The frontend server proxies `/api` and `/v1`, including long completions and streamed responses, so changing ports requires no React rebuild. Ctrl+C stops both listeners.
+
+An optional `.env` beside `server.exe` supports the provider keys, storage overrides, and launcher settings. Ports come from the saved JSON, with CLI port flags taking precedence for that run. For the bind address, CLI options take precedence over process environment variables, then `.env`, then the generated `runtime.json` profile. Relative routing `CONFIG_PATH` and explicit storage paths resolve beside the executable. Rebuilding replaces application artifacts, including `port_mapping.json`, while preserving per-user settings and each folder's existing `.env`, `config.json`, and other user files. Changes made only to an installed mapping are replaced on rebuild; edit the repository mapping to carry those defaults into future builds.
+
+### Remaining differences from `sample-react-python-project`
+
+- **External runtimes:** the portable Connector build starts the API and UI. Start Kokoro separately at the saved `kokoro_port`, or set `KOKORO_BASE_URL` to an external service; without healthy Kokoro, speech is unavailable and `/api/health` returns 503. Ollama also remains external. Python agents and plugins need an installed Python interpreter; set `CONNECTOR_PYTHON_EXECUTABLE` if it is not on PATH. C++ skills need a local compiler. The sample's simple counter has none of these extra runtime requirements.
+- **Settings fields:** Connector's mapping and user settings use `react_port`, `connector_port`, and `kokoro_port`; the sample uses `frontend_port` and `backend_port`. Connector uses `data_dir` for storage, while the sample uses `data_directory`. Both now share per-user settings and data across Debug and Release. Adapt the field names when borrowing sample configuration files; use separate `CONNECTOR_SETTINGS_PATH` and data overrides for independent Connector instances.
+- **Storage relocation:** saving a new folder requires restart and does not migrate existing data or named Python environments. Old standalone agent-environment folders are not automatically moved.
+- **Frontend validation:** Connector uses JavaScript and Node tests; the sample additionally supplies TypeScript checks and a Playwright browser suite. Connector does not currently have an equivalent browser end-to-end suite.
+- **Setup environments:** run and build respect an active Python environment, while `setup.py` still installs API dependencies in the repository `.venv`. The sample also reuses active environments during setup. If using an active environment for Connector, install `backend/requirements.txt` into it before running.
 
 ### Kokoro speech skill (required)
 
-Kokoro is a required Connector service. It remains isolated in its own Python 3.12 environment because its PyTorch dependencies differ from the main API. The Windows full-stack launchers run setup if either environment is missing, then launch Kokoro on port 8302 alongside the Connector.
+Kokoro is a required Connector service. It remains isolated in its own Python 3.12 environment because its PyTorch dependencies differ from the main API. The development full-stack launchers start it alongside Connector at the selected speech port (8131 when available). The portable build connects to an independently configured Kokoro service.
 
-For Connector speech requests, call the Connector on port 8301. The LAN launcher also exposes Kokoro on port 8302 for direct clients; the default launcher keeps both services on loopback.
+For speech requests, call the Connector at its printed API URL. The LAN development launcher also exposes Kokoro for direct clients; `run_default.bat` or `--local` keeps all three services on loopback.
 
 #### Skill contract: `kokoro_speak`
 
@@ -307,7 +436,7 @@ Plain-text responses are spoken as-is. When the complete response is JSON, it mu
 
 Only `This sentence can be spoken.` is synthesized from that JSON object; `actor` selects the narrator and metadata is never read aloud. JSON arrays, scalar JSON values, and objects without a string `text` field are rejected by the speech endpoint. The web UI shows **Speak** for every non-empty assistant response; clicking it on an unsupported JSON shape displays the validation error without sending content to Kokoro.
 
-In the web UI's sidebar, click **Settings** to open a modal with Voice actor, Past Memory, Show System Sessions, and Agentic Mode. Close it with the Close button, Escape, or by clicking outside the window. Past Memory defaults to on (unless the session's configuration disables it), Show System Sessions defaults to off, and Agentic Mode defaults to on. Saved preferences and session settings still apply.
+In the web UI's sidebar, click **Settings** to open a modal with Data storage folder, Voice actor, Past Memory, Show System Sessions, and Agentic Mode. Close it with the Close button, Escape, or by clicking outside the window. Past Memory defaults to on (unless the session's configuration disables it), Show System Sessions defaults to off, and Agentic Mode defaults to on. Saved preferences and session settings still apply.
 
 Choose a **Voice actor** in Settings for the Speak buttons. The list comes from `/api/speech/voices`, and the choice is remembered in this browser across sessions and page reloads. If fetching fails, the app automatically retries after 30 seconds, repeating until successful even when Settings is closed; you can also select Retry immediately. Selecting an actor overrides any actor in the model response JSON. Choose **Automatic** to use the response actor or the configured default.
 
@@ -327,7 +456,7 @@ from pathlib import Path
 
 import httpx
 
-connector = "http://127.0.0.1:8301"
+connector = "http://127.0.0.1:8130"
 model_response = "This plain-text response is sent to Kokoro."
 
 # JSON responses are also accepted; only their top-level text field is spoken:
@@ -351,7 +480,7 @@ speech.raise_for_status()
 Path("response.wav").write_bytes(speech.content)
 ```
 
-Omit the top-level `actor` to use one from the model response JSON, or the default voice when neither is supplied. Direct Kokoro clients can call `GET http://127.0.0.1:8302/v1/audio/voices` and send `{"input":"Hello.","voice":"am_michael"}` to `POST /v1/audio/speech`. The direct endpoint also accepts `actor` as an alias for `voice` (`voice` takes precedence), and defaults to `af_heart` when neither is supplied. The published voice IDs come from the [official Kokoro voice catalog](https://huggingface.co/hexgrad/Kokoro-82M/blob/main/VOICES.md); the selected voice determines the language when no explicit language is supplied.
+Omit the top-level `actor` to use one from the model response JSON, or the default voice when neither is supplied. Direct Kokoro clients can call `GET http://127.0.0.1:8131/v1/audio/voices` and send `{"input":"Hello.","voice":"am_michael"}` to `POST /v1/audio/speech`. The direct endpoint also accepts `actor` as an alias for `voice` (`voice` takes precedence), and defaults to `af_heart` when neither is supplied. The published voice IDs come from the [official Kokoro voice catalog](https://huggingface.co/hexgrad/Kokoro-82M/blob/main/VOICES.md); the selected voice determines the language when no explicit language is supplied.
 
 The first speech request may download the Kokoro model and language data. Configure the internal adapter in `.env` with `KOKORO_BASE_URL`, `KOKORO_VOICE`, `KOKORO_SPEED`, and `KOKORO_TIMEOUT`; restart the Connector after a change. Language follows the selected actor; `KOKORO_LANGUAGE` is no longer used. Non-English voices may require the corresponding optional Misaki language dependencies. The LAN launcher exposes both the Connector and Kokoro without inbound authentication. Restrict access to a trusted network or with a firewall or reverse proxy.
 
@@ -434,9 +563,9 @@ Save this envelope as `saved-config.json` for an API-only mock demo:
 Run the following in any terminal. On Windows use `curl.exe` if PowerShell aliases `curl` to another command. File bodies avoid shell-specific JSON quoting:
 
 ```bash
-curl --fail-with-body -sS -H "Content-Type: application/json" --data-binary @saved-config.json http://127.0.0.1:8301/api/configs
-curl --fail-with-body -sS http://127.0.0.1:8301/v1/models
-curl --fail-with-body -sS http://127.0.0.1:8301/v1/models/connector-demo
+curl --fail-with-body -sS -H "Content-Type: application/json" --data-binary @saved-config.json http://127.0.0.1:8130/api/configs
+curl --fail-with-body -sS http://127.0.0.1:8130/v1/models
+curl --fail-with-body -sS http://127.0.0.1:8130/v1/models/connector-demo
 ```
 
 The creation response includes the record's `id`. Repeating creation with the same `model_id` returns 409; use that record's PATCH endpoint to update it.
@@ -451,7 +580,7 @@ from pathlib import Path
 import httpx
 
 config = json.loads(Path("config.json").read_text(encoding="utf-8-sig"))
-with httpx.Client(base_url="http://127.0.0.1:8301", timeout=30) as client:
+with httpx.Client(base_url="http://127.0.0.1:8130", timeout=30) as client:
     checked = client.post("/api/config/validate", json=config)
     checked.raise_for_status()
     created = client.post("/api/configs", json={
@@ -468,7 +597,7 @@ with httpx.Client(base_url="http://127.0.0.1:8301", timeout=30) as client:
     print(client.get("/v1/models").json())
 ```
 
-To obtain a starting file, run `curl --fail-with-body -sS -o config.json http://127.0.0.1:8301/api/config/example`, then edit it. This downloads the explicit example; it does not save or activate a model automatically.
+To obtain a starting file, run `curl --fail-with-body -sS -o config.json http://127.0.0.1:8130/api/config/example`, then edit it. This downloads the explicit example; it does not save or activate a model automatically.
 
 ## Session configuration
 
@@ -705,9 +834,9 @@ The reply includes the assistant content, selected provider/model, token usage, 
 
 `max_steps` accepts 1-15 and defaults to 5; an optional `tools` list selects the tools described to the agent. The response includes tool steps and a final answer, which is saved in the session. If a structured response has `final_answer: null` without a registered tool action, the Connector re-prompts according to `agent_final_retries` (default 5). If every retry remains incomplete, the last response is displayed as a formatted JSON code block for inspection. This retry value is editable under **Agent settings** in the configuration screen. In the web chat, the reasoning and tool trace is retained in a collapsed panel and expands only when the user selects it. Neither chat nor agent requests accept provider/model overrides.
 
-`GET /api/agent/tools` lists available tool schemas. There are four built-in native tools: `run_python_script`, `install_python_package`, `create_coding_skill_from_conversation`, and [`fetch_memory`](#on-demand-memory-skill). `POST /api/agent/step` can execute Python with `{ "tool": "run_python_script", "arguments": { "code": "print(25 * 4)" } }`. Python scripts and persisted Python skills run in the currently selected managed virtual environment. The default is created lazily at `%TEMP%\the_connector_python` on Windows or `<system-temp>/the_connector_python` on macOS/Linux; set `AGENT_PYTHON_ENV_DIR` to override that location. When execution reports a missing third-party import, the agent can call `install_python_package` with the PyPI distribution and import names, then retry the script. For example: `{ "tool": "install_python_package", "arguments": { "package": "beautifulsoup4", "import_name": "bs4" } }`. Installation is non-interactive, accepts only a single package name plus an optional exact version, and targets the selected environment. Persisted coding skills have a `type` of `python`, `cmd`, or `c++`; CMD receives argument JSON through stdin and `CONNECTOR_SKILL_ARGS`, while C++17 skills are compiled with a discovered local `g++`, `clang++`, or MSVC `cl`. `GET /api/skills/export` downloads `skills.json`, and `POST /api/skills/import` restores it with explicit duplicate handling. `POST /api/agent/register-tool` still registers an external plugin webhook, which is identified separately from native and persisted skills.
+`GET /api/agent/tools` lists available tool schemas. There are four built-in native tools: `run_python_script`, `install_python_package`, `create_coding_skill_from_conversation`, and [`fetch_memory`](#on-demand-memory-skill). `POST /api/agent/step` can execute Python with `{ "tool": "run_python_script", "arguments": { "code": "print(25 * 4)" } }`. Python scripts and persisted Python skills run in the currently selected managed virtual environment. The default is created lazily under the selected data folder's `python/` directory (`%TEMP%\the_connector\python` by default); set `AGENT_PYTHON_ENV_DIR` to override that location. When execution reports a missing third-party import, the agent can call `install_python_package` with the PyPI distribution and import names, then retry the script. For example: `{ "tool": "install_python_package", "arguments": { "package": "beautifulsoup4", "import_name": "bs4" } }`. Installation is non-interactive, accepts only a single package name plus an optional exact version, and targets the selected environment. Persisted coding skills have a `type` of `python`, `cmd`, or `c++`; CMD receives argument JSON through stdin and `CONNECTOR_SKILL_ARGS`, while C++17 skills are compiled with a discovered local `g++`, `clang++`, or MSVC `cl`. `GET /api/skills/export` downloads `skills.json`, and `POST /api/skills/import` restores it with explicit duplicate handling. `POST /api/agent/register-tool` still registers an external plugin webhook, which is identified separately from native and persisted skills.
 
-The **Select venv** button in the top bar opens the Python execution-environment window. The default environment remains at `%TEMP%\the_connector_python`; named environments created in this window are stored under `%TEMP%\the_connector_python_envs` by default and are selected immediately after creation. The active selection is persisted in SQLite and controls both `run_python_script` and `install_python_package`. Set `AGENT_PYTHON_ENVS_DIR` to override the parent directory for newly created named environments.
+The **Select venv** button in the top bar opens the Python execution-environment window. Named environments created in this window are stored under the selected data folder's `python_envs/` directory (`%TEMP%\the_connector\python_envs` by default) and are selected immediately after creation. The active selection is persisted in SQLite and controls both `run_python_script` and `install_python_package`. Set `AGENT_PYTHON_ENVS_DIR` to override the parent directory for newly created named environments; existing environment records retain their absolute paths.
 
 | Endpoint | Purpose |
 |---|---|
@@ -748,7 +877,7 @@ The application endpoints use FastAPI errors such as `{ "detail": "..." }`: 422 
 
 ## OpenAI-compatible API for external agents
 
-Use **`http://127.0.0.1:8301/v1`** as the client base URL. The request's `model` must be an active library `model_id`, such as `connector-demo` or `my-assistant`; a raw upstream name is not automatically exposed. `GET /v1/models` returns the OpenAI `{ "object": "list", "data": [...] }` shape with active entries and available context metadata.
+Use **`http://127.0.0.1:8130/v1`** as the client base URL. The request's `model` must be an active library `model_id`, such as `connector-demo` or `my-assistant`; a raw upstream name is not automatically exposed. `GET /v1/models` returns the OpenAI `{ "object": "list", "data": [...] }` shape with active entries and available context metadata.
 
 Completion requests remain **sessionless**: send the active conversation and tool results in `messages` each time. They do not create web sessions, but when the selected configuration has `past_memory: true`, its system prompt receives the bounded daily memory archive described above. Every successful buffered response (including a response later emitted as SSE) is saved by itself in `completions_response`; request payloads are not copied into that table. Hermes or another calling client executes its own tools; the gateway forwards tool definitions, returns structured `tool_calls`, and accepts results on a subsequent request. `/api/agent/run` is the separate session-based agent that executes this application's local tools.
 
@@ -765,7 +894,7 @@ After saving the mock library entry above, save this as `completion.json`:
 ```
 
 ```bash
-curl --fail-with-body -sS -H "Content-Type: application/json" --data-binary @completion.json http://127.0.0.1:8301/v1/chat/completions
+curl --fail-with-body -sS -H "Content-Type: application/json" --data-binary @completion.json http://127.0.0.1:8130/v1/chat/completions
 ```
 
 The response contains `choices[0].message`, `finish_reason`, and OpenAI-style `usage` (`prompt_tokens`, `completion_tokens`, `total_tokens`). Its `model` remains the requested library model ID, even when the config selects an upstream fallback.
@@ -778,7 +907,7 @@ Save this as `client_demo.py` and run it in the project's Python environment. It
 import json
 from openai import OpenAI
 
-client = OpenAI(base_url="http://127.0.0.1:8301/v1", api_key="local-placeholder")
+client = OpenAI(base_url="http://127.0.0.1:8130/v1", api_key="local-placeholder")
 MODEL = "connector-demo"
 print([model.id for model in client.models.list().data])
 
@@ -850,7 +979,7 @@ For curl streaming, save this as `stream.json`:
 ```
 
 ```bash
-curl --fail-with-body -sS -N -H "Content-Type: application/json" --data-binary @stream.json http://127.0.0.1:8301/v1/chat/completions
+curl --fail-with-body -sS -N -H "Content-Type: application/json" --data-binary @stream.json http://127.0.0.1:8130/v1/chat/completions
 ```
 
 Streaming is **buffered SSE**: the backend waits for the complete upstream response, then emits role/content/tool-call deltas, a finish event, optional usage, and `data: [DONE]`. It provides the streaming protocol expected by SDKs, not live upstream token delivery or reduced first-token latency.
@@ -917,14 +1046,14 @@ Compatibility errors use the OpenAI error envelope:
 
 ## Hermes Agent setup
 
-First save and activate a real configuration with model ID `my-assistant` using the library or Python import above. Confirm it appears at `http://127.0.0.1:8301/v1/models`. This gateway connection uses Hermes's custom OpenAI Chat Completions transport; Hermes owns its conversation and tool execution.
+First save and activate a real configuration with model ID `my-assistant` using the library or Python import above. Confirm it appears at `http://127.0.0.1:8130/v1/models`. This gateway connection uses Hermes's custom OpenAI Chat Completions transport; Hermes owns its conversation and tool execution.
 
 Add this named provider to `~/.hermes/config.yaml`:
 
 ```yaml
 providers:
   connector:
-    api: http://127.0.0.1:8301/v1
+    api: http://127.0.0.1:8130/v1
     api_key: local-placeholder
     transport: chat_completions
     discover_models: true
@@ -941,7 +1070,7 @@ For a single custom endpoint, the equivalent manual model block is:
 ```yaml
 model:
   provider: custom
-  base_url: http://127.0.0.1:8301/v1
+  base_url: http://127.0.0.1:8130/v1
   api_key: local-placeholder
   api_mode: chat_completions
   default: my-assistant
@@ -955,7 +1084,7 @@ Use a real route with at least **64,000 tokens** of usable context for Hermes, a
 
 ### Windows and WSL connectivity
 
-If Hermes and the backend both run in WSL, the loopback URL works. For a Windows backend and Hermes in WSL, test `curl http://127.0.0.1:8301/v1/models` from WSL first. With NAT networking, start Windows with `run_backend.bat --host 0.0.0.0`, find its gateway address using `ip route show default` in WSL, and use `http://<windows-host-ip>:8301/v1`. Windows firewall access must permit that connection. Mirrored networking can preserve loopback access; see [Hermes's WSL networking guide](https://hermes-agent.nousresearch.com/docs/integrations/providers#wsl2-networking-windows-users).
+If Hermes and the backend both run in WSL, the loopback URL works. For a Windows backend and Hermes in WSL, test `curl http://127.0.0.1:8130/v1/models` from WSL first. With NAT networking, start Windows with `run_backend.bat --host 0.0.0.0`, find its gateway address using `ip route show default` in WSL, and use `http://<windows-host-ip>:8130/v1`. Windows firewall access must permit that connection. Mirrored networking can preserve loopback access; see [Hermes's WSL networking guide](https://hermes-agent.nousresearch.com/docs/integrations/providers#wsl2-networking-windows-users).
 
 Binding to `0.0.0.0` exposes this unauthenticated local API on available interfaces. Restrict access to the intended host/WSL connection. Use an actual hostname or IP in client URLs, never `0.0.0.0`.
 

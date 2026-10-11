@@ -1,9 +1,13 @@
 """Keep tests isolated from the user's persisted conversations and providers."""
 import os
+from pathlib import Path
 import tempfile
 
 _database_dir = tempfile.TemporaryDirectory(prefix="connector-tests-")
 os.environ["DB_PATH"] = os.path.join(_database_dir.name, "bootstrap.db")
+os.environ["DATA_DIR"] = os.path.join(_database_dir.name, "data")
+os.environ["CONNECTOR_SETTINGS_PATH"] = os.path.join(_database_dir.name, "settings.json")
+os.environ["KOKORO_BASE_URL"] = "http://127.0.0.1:8131"
 os.environ["DEBUG"] = "false"
 os.environ["RESPONSE_LOG_DIR"] = os.path.join(_database_dir.name, "response-logs")
 os.environ["RESPONSE_LOGGING_ENABLED"] = "true"
@@ -29,6 +33,11 @@ from backend.app.api import configurations, compatibility, configuration_history
 
 @pytest.fixture(autouse=True)
 def isolate_api_database(monkeypatch, tmp_path, request):
+    # Portable launcher tests change this environment variable directly. Register
+    # it before each test so teardown also restores those changes.
+    monkeypatch.setenv("CONNECTOR_RUNTIME_ROOT", str(Path(__file__).resolve().parents[2]))
+    monkeypatch.setenv("CONNECTOR_SETTINGS_PATH", str(tmp_path / "settings.json"))
+    monkeypatch.setattr(main.settings, "settings_path", tmp_path / "settings.json")
     monkeypatch.setattr(main.response_log_writer, "directory", tmp_path / "response-logs")
     manager = SessionManager(tmp_path / "sessions.db")
     monkeypatch.setattr(main.internal_audit_store, "db_path", manager.db_path)

@@ -9,7 +9,6 @@ import re
 import shutil
 import sqlite3
 import subprocess
-import sys
 import tempfile
 import uuid
 from datetime import datetime, timezone
@@ -17,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from ..config import settings
+from ..python_runtime import runtime_python_executable
 
 
 SKILL_NAME_PATTERN = re.compile(r"^[a-z][a-z0-9_]{1,63}$")
@@ -268,7 +268,7 @@ json.dump({"result": result, "stdout": captured.getvalue()}, sys.stdout, default
 '''
     try:
         completed = subprocess.run(
-            [python_executable or sys.executable, "-I", "-c", wrapper],
+            [python_executable or runtime_python_executable(), "-I", "-c", wrapper],
             input=json.dumps({"code": code, "arguments": arguments}),
             capture_output=True,
             text=True,

@@ -264,6 +264,53 @@ body {
   font-size: 0.82rem;
 }
 
+.storage-setting {
+  display: grid;
+  gap: 8px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: 0.82rem;
+}
+
+.storage-setting input {
+  width: 100%;
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  color: var(--text-main);
+  background: var(--bg-input);
+}
+
+.storage-setting-description,
+.storage-setting-paths {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  line-height: 1.5;
+}
+
+.storage-setting-paths code {
+  color: var(--text-main);
+  overflow-wrap: anywhere;
+}
+
+.storage-setting-error {
+  color: var(--accent-danger);
+  font-size: 0.75rem;
+}
+
+.storage-setting-notice {
+  color: var(--text-main);
+  font-size: 0.75rem;
+  line-height: 1.5;
+}
+
+.storage-setting-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .speech-setting {
   display: grid;
   gap: 6px;

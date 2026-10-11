@@ -113,11 +113,11 @@ pass `--ui-dir /absolute/path/to/ui`, or use the ZIP's run scripts.
 With Connector already running, start the plugin with webhook registration:
 
 ```cmd
-run.bat --register http://127.0.0.1:8301
+run.bat --register http://127.0.0.1:8130
 ```
 
 ```sh
-sh run.sh --register http://127.0.0.1:8301
+sh run.sh --register http://127.0.0.1:8130
 ```
 
 This uses the existing `POST /api/agent/register-tool` API to register the

@@ -297,5 +297,7 @@ def root():
 @router.get("/favicon.svg", include_in_schema=False)
 def favicon():
     icon = ROOT_DIR / "frontend" / "public" / "favicon.svg"
+    if not icon.is_file():
+        icon = ROOT_DIR / "public" / "favicon.svg"
     return Response(icon.read_bytes() if icon.is_file() else b'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><circle cx="8" cy="8" r="7" fill="#10b981"/></svg>',
                     media_type="image/svg+xml", headers={"Cache-Control": "public, max-age=86400"})

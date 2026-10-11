@@ -19,8 +19,8 @@ def test_default_database_is_in_system_temp(monkeypatch):
     settings = Settings(_env_file=None)
     assert settings.db_path == Path(tempfile.gettempdir()) / "the_connector" / "connector.db"
     assert settings.data_dir == settings.db_path.parent
-    assert settings.agent_python_env_dir == Path(tempfile.gettempdir()) / "the_connector_python"
-    assert settings.agent_python_envs_dir == Path(tempfile.gettempdir()) / "the_connector_python_envs"
+    assert settings.agent_python_env_dir == settings.data_dir / "python"
+    assert settings.agent_python_envs_dir == settings.data_dir / "python_envs"
 
 
 def test_explicit_storage_overrides(monkeypatch, tmp_path):

@@ -8,7 +8,7 @@ echo ========================================================
 python --version >nul 2>&1
 if %errorlevel% neq 0 (
     echo Error: Python is not installed or not in PATH.
-    echo Please install Python 3.10+ and re-run.
+    echo Please install Python 3.11+ and re-run.
     pause
     exit /b 1
 )

@@ -32,8 +32,8 @@ def log(msg: str) -> None:
 
 def check_prerequisites() -> None:
     log("Checking prerequisites...")
-    if sys.version_info < (3, 10):
-        sys.exit("Error: Python 3.10 or higher is required.")
+    if sys.version_info < (3, 11):
+        sys.exit("Error: Python 3.11 or higher is required.")
     print(f"[OK] Python version: {sys.version.split()[0]}")
 
     npm_bin = "npm.cmd" if os.name == "nt" else "npm"

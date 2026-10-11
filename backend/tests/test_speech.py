@@ -57,7 +57,7 @@ def test_speech_endpoint_forwards_only_the_json_text_field(monkeypatch):
     assert response.headers["content-type"] == "audio/wav"
     assert response.headers["x-audio-duration"] == "1.25"
     assert response.content == b"RIFF-test-wave"
-    assert captured["url"] == "http://127.0.0.1:8302/v1/audio/speech"
+    assert captured["url"] == "http://127.0.0.1:8131/v1/audio/speech"
     assert captured["payload"]["input"] == "Read this only."
     assert captured["payload"]["voice"] == "af_heart"
     assert "thought" not in captured["payload"]["input"]
@@ -160,12 +160,12 @@ def test_speech_endpoint_reports_unavailable_kokoro(monkeypatch):
     response = client.post("/api/speech", json={"content": '{"text":"Hello"}'})
 
     assert response.status_code == 503
-    assert "http://127.0.0.1:8302" in response.json()["detail"]
+    assert "http://127.0.0.1:8131" in response.json()["detail"]
 
 
 def test_connector_exposes_verified_kokoro_health(monkeypatch):
     def kokoro_get(url, *, timeout):
-        assert url == "http://127.0.0.1:8302/health"
+        assert url == "http://127.0.0.1:8131/health"
         assert timeout == 5.0
         return httpx.Response(200, json={
             "status": "ok",
@@ -184,7 +184,7 @@ def test_connector_exposes_verified_kokoro_health(monkeypatch):
 
 def test_connector_lists_kokoro_voices(monkeypatch):
     def kokoro_get(url, *, timeout):
-        assert url == "http://127.0.0.1:8302/v1/audio/voices"
+        assert url == "http://127.0.0.1:8131/v1/audio/voices"
         return httpx.Response(200, json={
             "default": "af_heart", "voices": ["af_heart", "am_michael"],
         })

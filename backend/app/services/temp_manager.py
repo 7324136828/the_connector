@@ -1,27 +1,27 @@
-"""Isolated system temp directory management and ZIP packaging per productionization standards."""
+"""Isolated job folders and ZIP exports under the configured data directory."""
 
 from __future__ import annotations
 
 import json
 import shutil
-import tempfile
 import uuid
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 
 from ..schemas.chat import SessionDetail
+from ..config import settings
 
 
 class TempManager:
-    """Manages isolated job folders under system temp for scratch data and exports."""
+    """Manages isolated job folders for scratch data and exports."""
 
     def __init__(self):
-        self.base_temp_dir = Path(tempfile.gettempdir()) / "the_connector_jobs"
+        self.base_temp_dir = settings.jobs_dir
         self.base_temp_dir.mkdir(parents=True, exist_ok=True)
 
     def get_job_dir(self, session_or_job_id: str) -> Path:
-        """Return or create isolated folder structure under system temp."""
+        """Return or create an isolated folder structure under the jobs directory."""
         job_dir = self.base_temp_dir / session_or_job_id
         (job_dir / "inputs").mkdir(parents=True, exist_ok=True)
         (job_dir / "work").mkdir(parents=True, exist_ok=True)

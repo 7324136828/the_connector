@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from ..config import settings
+from ..python_runtime import PythonRuntimeError, runtime_python_executable
 
 
 ENVIRONMENT_NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$")
@@ -151,7 +152,7 @@ class PythonEnvironmentManager:
                 return str(python_executable)
             try:
                 completed = subprocess.run(
-                    [sys.executable, "-m", "venv", str(environment_dir)],
+                    [runtime_python_executable(), "-m", "venv", str(environment_dir)],
                     capture_output=True,
                     text=True,
                     encoding="utf-8",
@@ -162,6 +163,8 @@ class PythonEnvironmentManager:
                 raise PythonEnvironmentProvisionError(
                     f"Creating Python environment '{environment['name']}' timed out."
                 ) from exc
+            except (PythonRuntimeError, OSError) as exc:
+                raise PythonEnvironmentProvisionError(str(exc)) from exc
             if completed.returncode != 0 or not python_executable.is_file():
                 output = "\n".join(
                     part.strip() for part in (completed.stdout, completed.stderr) if part.strip()

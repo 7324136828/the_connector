@@ -23,14 +23,15 @@ from starlette.datastructures import Headers
 from starlette.responses import JSONResponse, Response, StreamingResponse
 from starlette.staticfiles import StaticFiles
 
+if __package__ in (None, "") and not getattr(sys, "frozen", False):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from backend.packaged_kokoro import KokoroProcess, RunError
+
 HOP_BY_HOP_HEADERS = {
     "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
     "te", "trailer", "transfer-encoding", "upgrade",
 }
-
-
-class RunError(RuntimeError):
-    """Raised when the portable application cannot start or keep running."""
 
 
 def runtime_directory() -> Path:
@@ -105,7 +106,7 @@ def parse_args(
     )
     parser.add_argument(
         "--kokoro", "--kokoro-port", dest="kokoro_port", type=port_number,
-        help="external speech port (default: settings.json kokoro_port or port_mapping.json)",
+        help="bundled Kokoro port (default: settings.json kokoro_port or port_mapping.json)",
     )
     parser.add_argument(
         "--initialize-settings", action="store_true",
@@ -130,6 +131,11 @@ def parse_args(
             setattr(options, field, preferences[setting])
     if not options.initialize_settings and options.frontend_port == options.backend_port:
         parser.error("frontend and backend ports must be different")
+    if (
+        not options.initialize_settings and not os.environ.get("KOKORO_BASE_URL", "").strip()
+        and options.kokoro_port in (options.frontend_port, options.backend_port)
+    ):
+        parser.error("bundled Kokoro, frontend and backend ports must be different")
     return options
 
 
@@ -247,6 +253,7 @@ class ManagedServer(uvicorn.Server):
 async def serve_applications(
     backend: FastAPI, frontend: FastAPI,
     backend_socket: socket.socket, frontend_socket: socket.socket,
+    *, kokoro: KokoroProcess | None = None,
 ) -> int:
     servers = [
         ManagedServer(uvicorn.Config(
@@ -256,6 +263,7 @@ async def serve_applications(
         for application in (backend, frontend)
     ]
     stopping = False
+    stopped = asyncio.Event()
 
     def stop_services(signum: int, frame: object) -> None:
         nonlocal stopping
@@ -264,8 +272,9 @@ async def serve_applications(
             if stopping:
                 server.force_exit = True
         if not stopping:
-            print("\n[run] Stopping both services...", flush=True)
+            print("\n[run] Stopping services...", flush=True)
         stopping = True
+        stopped.set()
 
     async def serve(server: ManagedServer, listener: socket.socket, label: str) -> None:
         try:
@@ -278,22 +287,42 @@ async def serve_applications(
     if hasattr(signal, "SIGBREAK"):
         signals.append(signal.SIGBREAK)
     previous = {item: signal.signal(item, stop_services) for item in signals}
-    tasks = [
-        asyncio.create_task(serve(server, listener, label))
-        for server, listener, label in zip(
-            servers, (backend_socket, frontend_socket), ("Backend", "Frontend"),
-        )
-    ]
+    tasks: list[asyncio.Task] = []
+    labels = ["Backend", "Frontend"]
+    monitor: asyncio.Task | None = None
+    results = []
     try:
+        if kokoro is not None:
+            kokoro.start()
+            if not await kokoro.wait_ready(stopped):
+                return 0
+        tasks = [
+            asyncio.create_task(serve(server, listener, label))
+            for server, listener, label in zip(
+                servers, (backend_socket, frontend_socket), labels,
+            )
+        ]
+        if kokoro is not None:
+            monitor = asyncio.create_task(kokoro.monitor())
+            tasks.append(monitor)
+            labels.append("Kokoro")
         await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
     finally:
         for server in servers:
             server.should_exit = True
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        for item, handler in previous.items():
-            signal.signal(item, handler)
-    for label, result in zip(("Backend", "Frontend"), results):
-        if isinstance(result, BaseException):
+        if monitor is not None and not monitor.done():
+            monitor.cancel()
+        try:
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+        finally:
+            try:
+                if kokoro is not None:
+                    kokoro.stop()
+            finally:
+                for item, handler in previous.items():
+                    signal.signal(item, handler)
+    for label, result in zip(labels, results):
+        if isinstance(result, BaseException) and not isinstance(result, asyncio.CancelledError):
             raise RunError(f"{label} failed: {result}") from result
     if not stopping:
         raise RunError("A service stopped unexpectedly; both services have been stopped")
@@ -311,7 +340,8 @@ def main(argv: list[str] | None = None) -> int:
 
         print(f"[run] Settings initialized: {settings_file_path()}")
         return 0
-    if not os.environ.get("KOKORO_BASE_URL", "").strip():
+    external_kokoro = bool(os.environ.get("KOKORO_BASE_URL", "").strip())
+    if not external_kokoro:
         os.environ["KOKORO_BASE_URL"] = f"http://127.0.0.1:{options.kokoro_port}"
     public = root / "public"
     if not (public / "index.html").is_file():
@@ -344,10 +374,16 @@ def main(argv: list[str] | None = None) -> int:
             print("Open a LAN URL on another device connected to the same network.")
         print(f"Data:     {settings.data_dir}")
         print(f"Database: {settings.db_path}")
-        print(f"Kokoro:   {settings.kokoro_base_url} (external speech service)")
-        print("Kokoro speech service and agent/plugin Python runtimes are configured separately.")
-        print("[run] Press Ctrl+C to stop both services.", flush=True)
-        return asyncio.run(serve_applications(app, frontend, backend_socket, frontend_socket))
+        speech_mode = "external speech service" if external_kokoro else "bundled speech service"
+        print(f"Kokoro:   {settings.kokoro_base_url} ({speech_mode})")
+        print("Agent/plugin Python runtimes are configured separately.")
+        print("[run] Press Ctrl+C to stop services.", flush=True)
+        return asyncio.run(serve_applications(
+            app, frontend, backend_socket, frontend_socket,
+            kokoro=None if external_kokoro else KokoroProcess(
+                root, options.kokoro_port, log_directory=settings.response_log_dir,
+            ),
+        ))
     finally:
         if frontend_socket is not None:
             frontend_socket.close()

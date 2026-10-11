@@ -1,0 +1,4 @@
+# Freezer dependencies stay in the isolated Python 3.12 speech build environment.
+pyinstaller>=6.16,<7.0
+# Freeze the English phonemizer model so first speech needs no runtime download.
+https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl

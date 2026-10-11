@@ -7,6 +7,7 @@ import sys
 import threading
 import unittest
 from http.server import ThreadingHTTPServer
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 from urllib.error import HTTPError
@@ -102,6 +103,71 @@ class KokoroDeviceTest(unittest.TestCase):
 
     def test_default_port_is_the_isolated_backend_port(self):
         self.assertEqual(server.parse_args([]).port, 8131)
+
+
+class KokoroBundleTest(unittest.TestCase):
+    def test_frozen_model_directory_is_relative_to_bundle_not_working_directory(self):
+        with patch.dict(server.os.environ, {}, clear=True), patch.object(
+            sys, "_MEIPASS", str(Path("C:/bundle/_internal")), create=True
+        ):
+            self.assertEqual(
+                server.bundled_model_directory(), Path("C:/bundle/_internal/kokoro-model")
+            )
+
+    def test_explicit_model_directory_overrides_frozen_default(self):
+        directory = str(Path("C:/models"))
+        with patch.dict(
+            server.os.environ, {"KOKORO_MODEL_DIR": directory}
+        ), patch.object(sys, "_MEIPASS", "ignored", create=True):
+            self.assertEqual(server.bundled_model_directory(), Path(directory).resolve())
+
+    def test_missing_bundle_fails_before_http_service_advertises_health(self):
+        with patch.object(Path, "is_file", return_value=False):
+            with self.assertRaisesRegex(RuntimeError, "Bundled Kokoro assets are missing"):
+                server.KokoroService("cpu", Path("C:/bundle/model"))
+
+    def test_bundle_uses_local_model_and_voice_files_and_reuses_one_model(self):
+        with patch.object(Path, "is_file", return_value=True):
+            assets = Path("C:/bundle/model")
+            model = Mock()
+            model.to.return_value.eval.return_value = model
+            pipeline = Mock()
+            pipeline.voices = {}
+            voice_pack = object()
+            pipeline.load_single_voice.return_value = voice_pack
+            with patch.object(server.kokoro, "KModel", return_value=model, create=True) as make_model, patch.object(
+                server.kokoro, "KPipeline", return_value=pipeline
+            ) as make_pipeline:
+                service = server.KokoroService("cpu", assets)
+                service.pipeline("a")
+                service.pipeline("b")
+                self.assertEqual(service.voice_argument(pipeline, "af_heart"), "af_heart")
+                self.assertEqual(service.voice_argument(pipeline, "af_heart"), "af_heart")
+
+            make_model.assert_called_once_with(
+                repo_id=server.MODEL_REPO,
+                config=str(assets / "config.json"),
+                model=str(assets / "kokoro-v1_0.pth"),
+            )
+            model.to.assert_called_once_with("cpu")
+            self.assertEqual(make_pipeline.call_count, 2)
+            self.assertIs(make_pipeline.call_args.kwargs["model"], model)
+            pipeline.load_single_voice.assert_called_once_with(str(assets / "voices/af_heart.pt"))
+            self.assertIs(pipeline.voices["af_heart"], voice_pack)
+
+    def test_bundle_never_downloads_missing_voice_at_request_time(self):
+        with patch.object(Path, "is_file", side_effect=lambda path: path.name != "am_michael.pt", autospec=True):
+            assets = Path("C:/bundle/model")
+            service = server.KokoroService("cpu", assets)
+            pipeline = Mock()
+            pipeline.voices = {}
+            with self.assertRaisesRegex(RuntimeError, "Bundled Kokoro voice is missing"):
+                service.voice_argument(pipeline, "am_michael")
+            pipeline.load_single_voice.assert_not_called()
+
+    def test_voice_blend_uses_official_kokoro_delimiter(self):
+        service = server.KokoroService("cpu")
+        self.assertEqual(service.voice_argument(Mock(), "af_heart+am_michael"), "af_heart,am_michael")
 
 
 class FakeService:

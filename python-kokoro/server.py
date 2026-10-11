@@ -19,27 +19,33 @@ import wave
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.metadata import PackageNotFoundError, version
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
 import kokoro
+from model_assets import DEFAULT_VOICE, MODEL_REPO, VOICES
 
 
-MODEL_REPO = "hexgrad/Kokoro-82M"
-DEFAULT_VOICE = "af_heart"
-# Voice assets: https://huggingface.co/hexgrad/Kokoro-82M/blob/main/VOICES.md
-VOICES = tuple(sorted("""
-af_heart af_alloy af_aoede af_bella af_jessica af_kore af_nicole af_nova
-af_river af_sarah af_sky am_adam am_echo am_eric am_fenrir am_liam
-am_michael am_onyx am_puck am_santa bf_alice bf_emma bf_isabella bf_lily
-bm_daniel bm_fable bm_george bm_lewis ef_dora em_alex em_santa ff_siwis
-hf_alpha hf_beta hm_omega hm_psi if_sara im_nicola jf_alpha jf_gongitsune
-jf_nezumi jf_tebukuro jm_kumo pf_dora pm_alex pm_santa zf_xiaobei
-zf_xiaoni zf_xiaoxiao zf_xiaoyi zm_yunjian zm_yunxi zm_yunxia zm_yunyang
-""".split()))
 SAMPLE_RATE = 24_000
 MAX_REQUEST_BYTES = 2 * 1024 * 1024
 LOG = logging.getLogger("kokoro-service")
+
+
+def bundled_model_directory() -> Path | None:
+    """Find the explicit model assets shipped with the standalone service.
+
+    PyInstaller places bundled data under ``_MEIPASS``. Passing those paths to
+    Kokoro keeps packaged speech independent of the user's Hugging Face cache
+    and avoids a first-request model download.
+    """
+    configured = os.environ.get("KOKORO_MODEL_DIR")
+    if configured:
+        return Path(configured).resolve()
+    bundle_root = getattr(sys, "_MEIPASS", None)
+    if bundle_root is not None:
+        return Path(bundle_root) / "kokoro-model"
+    return None
 
 
 def package_version(name: str) -> str:
@@ -88,9 +94,24 @@ def wav_bytes(audio: Any, sample_rate: int = SAMPLE_RATE) -> bytes:
 class KokoroService:
     """Own the model and serialize requests through one reusable pipeline."""
 
-    def __init__(self, requested_device: str = "auto") -> None:
+    def __init__(
+        self, requested_device: str = "auto", model_directory: Path | None = None
+    ) -> None:
         self.requested_device = requested_device
         self.device = select_device(requested_device)
+        self.model_directory = (
+            model_directory if model_directory is not None else bundled_model_directory()
+        )
+        self._model = None
+        if self.model_directory is not None:
+            required = (
+                self.model_directory / "config.json",
+                self.model_directory / "kokoro-v1_0.pth",
+                self.model_directory / "voices" / f"{DEFAULT_VOICE}.pt",
+            )
+            missing = [str(path) for path in required if not path.is_file()]
+            if missing:
+                raise RuntimeError(f"Bundled Kokoro assets are missing: {', '.join(missing)}")
         self._pipelines: dict[str, Any] = {}
         self._pipeline_lock = threading.Lock()
         self._synthesis_lock = threading.Lock()
@@ -104,13 +125,30 @@ class KokoroService:
                     lang_code,
                     self.device,
                 )
-                pipeline = kokoro.KPipeline(
-                    lang_code=lang_code,
-                    repo_id=MODEL_REPO,
-                    device=self.device,
-                )
+                options = dict(lang_code=lang_code, repo_id=MODEL_REPO, device=self.device)
+                if self.model_directory is not None:
+                    if self._model is None:
+                        self._model = kokoro.KModel(
+                            repo_id=MODEL_REPO,
+                            config=str(self.model_directory / "config.json"),
+                            model=str(self.model_directory / "kokoro-v1_0.pth"),
+                        ).to(self.device).eval()
+                    options["model"] = self._model
+                pipeline = kokoro.KPipeline(**options)
                 self._pipelines[lang_code] = pipeline
             return pipeline
+
+    def voice_argument(self, pipeline: Any, voice: str) -> str:
+        names = voice.split("+")
+        if self.model_directory is not None:
+            for name in names:
+                if name not in pipeline.voices:
+                    asset = self.model_directory / "voices" / f"{name}.pt"
+                    if not asset.is_file():
+                        raise RuntimeError(f"Bundled Kokoro voice is missing: {asset}")
+                    pipeline.voices[name] = pipeline.load_single_voice(str(asset))
+        # The API accepts '+' blends; official Kokoro uses ',' internally.
+        return ",".join(names)
 
     def synthesize(
         self, text: str, voice: str, speed: float, lang_code: str
@@ -122,8 +160,10 @@ class KokoroService:
         # lock is conservative and makes concurrent HTTP requests deterministic.
         with self._synthesis_lock:
             chunks = []
-            for _graphemes, _phonemes, audio in self.pipeline(lang_code)(
-                text, voice=voice, speed=speed
+            pipeline = self.pipeline(lang_code)
+            voice_argument = self.voice_argument(pipeline, voice)
+            for _graphemes, _phonemes, audio in pipeline(
+                text, voice=voice_argument, speed=speed
             ):
                 if audio is not None:
                     if hasattr(audio, "detach"):
@@ -174,6 +214,7 @@ class KokoroService:
             "cudaVersion": torch.version.cuda,
             "gpuName": torch.cuda.get_device_name() if self.device == "cuda" else None,
             "model": MODEL_REPO,
+            "bundledModel": self.model_directory is not None,
             "modelLoaded": bool(pipelines),
             "modelDevices": model_devices,
             "fingerprint": (

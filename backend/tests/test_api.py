@@ -37,8 +37,12 @@ def test_health_and_config_download(monkeypatch):
     assert client.post("/api/config/validate", json=example.json()).status_code == 200
     models = client.get("/api/providers/models").json()
     reasoning = next(m for m in models if m["id"] == "gpt-5-nano")
-    assert reasoning["effort_levels"] == ["minimal", "low", "medium", "high"]
-    assert next(m for m in models if m["id"] == "gpt-4o-mini")["effort_levels"] == []
+    openai_levels = ["none", "minimal", "low", "medium", "high", "xhigh", "max"]
+    assert reasoning["effort_levels"] == openai_levels
+    for model in models:
+        if model["provider"] == "openai":
+            assert model["effort_levels"] == openai_levels
+            assert model["default_effort"] == "minimal"
     assert client.post("/api/config", json=MOCK_CONFIG).status_code == 404
     aliases = client.post("/api/models/capabilities", json={"provider": "openrouter", "model": "anthropic/claude-opus-4.6"})
     assert aliases.json() == {
@@ -48,7 +52,35 @@ def test_health_and_config_download(monkeypatch):
     arbitrary = client.post("/api/models/capabilities", json={"provider": "openrouter", "model": "vendor/future-model"})
     assert arbitrary.json()["effort_levels"] == ["none", "minimal", "low", "medium", "high", "xhigh", "max"]
     snapshot = client.post("/api/models/capabilities", json={"provider": "openai", "model": "gpt-5.2-2025-12-11"})
-    assert snapshot.json()["effort_levels"] == ["none", "low", "medium", "high", "xhigh"]
+    assert snapshot.json() == {"effort_levels": openai_levels, "default_effort": "minimal"}
+
+
+@pytest.mark.parametrize("model", ["gpt-4o-mini", "gpt-5.2-2025-12-11", "custom-openai-model"])
+@pytest.mark.parametrize("fields,expected", [
+    ({}, "minimal"), ({"effort": None}, "minimal"),
+    *[({"effort": effort}, effort) for effort in ["none", "minimal", "low", "medium", "high", "xhigh", "max"]],
+])
+def test_any_openai_model_accepts_effort_and_defaults_direct_and_probability_routes(model, fields, expected):
+    route = {"provider": "openai", "model": model, **fields}
+    config = {"sequences": [route, {"type": "probability", "choices": [{**route, "probability": 100}]}]}
+    original = deepcopy(config)
+    response = client.post("/api/config/validate", json=config)
+    assert response.status_code == 200, response.text
+    normalized = response.json()
+    assert normalized["sequences"][0]["effort"] == expected
+    assert normalized["sequences"][1]["choices"][0]["effort"] == expected
+    sid = session(config)
+    assert client.get(f"/api/sessions/{sid}").json()["config"] == normalized
+    assert config == original
+
+
+def test_custom_openai_model_capabilities_offer_all_efforts_with_minimal_default():
+    response = client.post("/api/models/capabilities", json={"provider": "openai", "model": "custom-openai-model"})
+    assert response.status_code == 200
+    assert response.json() == {
+        "effort_levels": ["none", "minimal", "low", "medium", "high", "xhigh", "max"],
+        "default_effort": "minimal",
+    }
 
 
 @pytest.mark.parametrize("payload", [{}, {"provider": "mock"}, {"config": None}, {"config": MOCK_CONFIG, "model": "override"}])

@@ -21,7 +21,7 @@ class OpenAIAPIError(ChatAPIError):
 
 
 def lowest_reasoning_effort(model: str) -> str | None:
-    """Detect minimum reasoning effort for reasoning models."""
+    """Return the Connector's default reasoning effort for an OpenAI model."""
     return default_effort("openai", model)
 
 
@@ -69,7 +69,7 @@ def openai_chat(
     effort = resolve_effort("openai", model, effort)
     if effort is not None:
         request_options["reasoning_effort"] = effort
-    elif temperature is not None:
+    if effort in (None, "none") and temperature is not None:
         request_options["temperature"] = temperature
 
     if max_output_tokens > 0:

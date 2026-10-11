@@ -15,10 +15,10 @@ before(async () => {
 
 after(async () => { await server?.close(); });
 
-function render(config) {
+function render(config, models = [{ provider: 'openai', id: 'gpt-5', effort_levels: ['low', 'high'], default_effort: 'low' }]) {
   return renderToStaticMarkup(React.createElement(ConfigModal, {
     isOpen: true, config, onClose() {}, onConfigSaved() {},
-    models: [{ provider: 'openai', id: 'gpt-5', effort_levels: ['low', 'high'], default_effort: 'low' }],
+    models,
   }));
 }
 
@@ -48,6 +48,26 @@ test('model settings expose separate input and output token limits for every rou
   assert.match(html, /estimated prompt, including instructions, memory, messages, and tools/);
   assert.match(html, /oversized route is skipped or returns an error without trimming/);
   assert.match(html, /context_window<\/code> controls the number of recent messages/);
+});
+
+test('OpenAI routes show minimal as the default and allow explicit effort on any model', () => {
+  const levels = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
+  const models = ['gpt-4o-mini', 'custom-openai-model'].map((id) => ({
+    provider: 'openai', id, effort_levels: levels, default_effort: 'minimal',
+  }));
+  const html = render({ sequences: [
+    { provider: 'openai', model: 'gpt-4o-mini' },
+    { type: 'probability', choices: [{ provider: 'openai', model: 'custom-openai-model', effort: 'xhigh' }] },
+  ] }, models);
+  const selectors = [...html.matchAll(/<select\b[^>]*>[\s\S]*?<\/select>/g)].map(([selector]) => selector);
+  assert.equal(selectors.length, 2);
+  selectors.forEach((selector) => {
+    assert.match(selector, /Default \(minimal\)/);
+    for (const effort of levels) assert.ok(selector.includes(`<option value="${effort}"`));
+  });
+  assert.match(selectors[0], /<option value="" selected="">Default \(minimal\)<\/option>/);
+  assert.match(selectors[1], /<option value="xhigh" selected="">xhigh<\/option>/);
+  assert.match(html, /OpenAI effort defaults to minimal for every model/);
 });
 
 test('configuration-wide token controls expose top-level caps and describe missing-limit behavior', () => {

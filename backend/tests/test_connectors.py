@@ -66,8 +66,12 @@ def capture_http(monkeypatch, module, data):
     ("gpt-5", None, "minimal"),
     ("gpt-5-mini", "high", "high"),
     ("gpt-5-nano-2025-08-07", "medium", "medium"),
-    ("o3-mini", None, "low"),
+    ("o3-mini", None, "minimal"),
     ("o4-mini", "low", "low"),
+    ("gpt-4o-mini", "high", "high"),
+    ("custom-openai-model", None, "minimal"),
+    ("custom-openai-model", "max", "max"),
+    ("gpt-5.2", "none", "none"),
 ])
 def test_openai_chat_uses_selected_effort_and_reasoning_token_limit(model, selected, expected):
     client, create = completion_client()
@@ -80,14 +84,18 @@ def test_openai_chat_uses_selected_effort_and_reasoning_token_limit(model, selec
     assert options["reasoning_effort"] == expected
     assert options["max_completion_tokens"] == 512
     assert "max_tokens" not in options
-    assert "temperature" not in options
+    if expected == "none":
+        assert options["temperature"] == 0.2
+    else:
+        assert "temperature" not in options
     assert options["messages"] == [{"role": "system", "content": SYSTEM}, *MESSAGES]
     assert reply == "The number is 42."
     assert (usage.input_tokens, usage.output_tokens) == (17, 6)
 
 
 @pytest.mark.parametrize("selected,expected", [(None, "minimal"), ("high", "high")])
-def test_openai_responses_fallback_preserves_effort_context_and_token_limit(selected, expected):
+@pytest.mark.parametrize("model", ["gpt-5-mini", "custom-openai-model"])
+def test_openai_responses_fallback_preserves_effort_context_and_token_limit(model, selected, expected):
     client, create = completion_client()
     create.side_effect = RuntimeError("This model requires the Responses API")
     responses_create = Mock(return_value=SimpleNamespace(
@@ -97,12 +105,12 @@ def test_openai_responses_fallback_preserves_effort_context_and_token_limit(sele
     client.responses = SimpleNamespace(create=responses_create)
     with capture_token_usage() as usage:
         reply = openai_connector.openai_chat(
-            client, model="gpt-5-mini", messages=MESSAGES,
+            client, model=model, messages=MESSAGES,
             system_prompt=SYSTEM, max_output_tokens=768, effort=selected,
         )
     assert create.call_args.kwargs["reasoning_effort"] == expected
     assert responses_create.call_args.kwargs == {
-        "model": "gpt-5-mini", "input": MESSAGES, "instructions": SYSTEM,
+        "model": model, "input": MESSAGES, "instructions": SYSTEM,
         "reasoning": {"effort": expected}, "max_output_tokens": 768,
     }
     assert reply == "Recalled 42."
@@ -110,24 +118,24 @@ def test_openai_responses_fallback_preserves_effort_context_and_token_limit(sele
 
 
 @pytest.mark.parametrize("model", ["gpt-4o-mini", "o1-preview", "gpt-future"])
-def test_openai_output_limit_does_not_depend_on_registered_effort(model):
+def test_openai_unregistered_models_use_minimal_effort_and_reasoning_token_limit(model):
     client, create = completion_client()
     openai_connector.openai_chat(
         client, model=model, messages=MESSAGES, temperature=0.2, max_output_tokens=256,
     )
     options = create.call_args.kwargs
-    assert options["temperature"] == 0.2
+    assert "temperature" not in options
     assert options["max_completion_tokens"] == 256
     assert "max_tokens" not in options
-    assert "reasoning_effort" not in options
+    assert options["reasoning_effort"] == "minimal"
 
 
-def test_openai_omits_unspecified_temperature_for_unclassified_model():
+def test_openai_defaults_unclassified_model_to_minimal_without_unspecified_limits():
     client, create = completion_client()
     openai_connector.openai_chat(client, model="gpt-future", messages=MESSAGES)
     options = create.call_args.kwargs
     assert "temperature" not in options
-    assert "reasoning_effort" not in options
+    assert options["reasoning_effort"] == "minimal"
     assert "max_tokens" not in options
     assert "max_completion_tokens" not in options
 
@@ -374,7 +382,7 @@ def test_ollama_uses_top_level_think_for_supported_model(monkeypatch, selected, 
 
 
 @pytest.mark.parametrize("connector,model,selected", [
-    (openai_connector.openai_chat, "gpt-4o-mini", "high"),
+    (openai_connector.openai_chat, "custom-openai-model", "easy"),
     (openai_connector.openai_chat, "gpt-5", "easy"),
     (claude_connector.claude_chat, "claude-3-5-haiku-20241022", "low"),
     (claude_connector.claude_chat, "claude-sonnet-4-6", "max"),

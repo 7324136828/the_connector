@@ -254,6 +254,7 @@ export function ConfigModal({ isOpen, onClose, onConfigSaved, config, models = [
             <section className="config-efforts" aria-label="Model limits and effort settings">
               <h3>Model limits and effort</h3>
               <p className="config-description">Set optional token limits for each model. Blank adds no model cap; configuration limits and provider capacity still apply. Changes update the JSON above.</p>
+              <p className="config-description">OpenAI effort defaults to minimal for every model. Choose another level to override it; available levels depend on the model at OpenAI.</p>
               <p className="config-description" id="model-limits-help">Input limits cover the estimated prompt, including instructions, memory, messages, and tools. An oversized route is skipped or returns an error without trimming. Output caps generated tokens, including reasoning where counted by the provider; lower client limits still apply.</p>
               <p className="config-description">These limits use tokens. <code>context_window</code> controls the number of recent messages.</p>
               {routes.map((route) => {

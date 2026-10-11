@@ -51,15 +51,16 @@ def test_openai_preserves_tool_round_trip_instructions_and_reasoning():
     install_openai(service, "openai", create)
     original = deepcopy(MESSAGES)
     options = {"tools": [TOOL], "tool_choice": "auto", "parallel_tool_calls": False,
-               "temperature": 0.4, "max_tokens": 256, "stop": ["END"], "seed": 8,
+               "temperature": 0.4, "max_completion_tokens": 256, "stop": ["END"], "seed": 8,
                "response_format": {"type": "json_object"}}
-    result = service.complete(MESSAGES, config("openai", "gpt-4o-mini"), options)
+    result = service.complete(MESSAGES, config("openai", "gpt-5.2", effort="none"), options)
     request = captured[0]
     assert request["messages"] == [{"role": "system", "content": "Configuration instruction"}] + original
     assert MESSAGES == original
     assert request["tools"] == [TOOL]
     assert all(request[key] == value for key, value in options.items())
     assert request["stream"] is False
+    assert request["reasoning_effort"] == "none"
     assert result["message"] == reply
     assert result["finish_reason"] == "tool_calls"
     assert result["model"] == "actual-model"
@@ -67,12 +68,14 @@ def test_openai_preserves_tool_round_trip_instructions_and_reasoning():
     assert result["usage"] == {"prompt_tokens": 10, "completion_tokens": 4, "total_tokens": 14}
 
 
-def test_configured_effort_wins_and_reasoning_token_limit_is_translated():
+@pytest.mark.parametrize("model", ["gpt-5-nano", "custom-openai-model"])
+@pytest.mark.parametrize("route_effort,expected", [({}, "minimal"), ({"effort": "low"}, "low"), ({"effort": "max"}, "max")])
+def test_configured_effort_wins_and_reasoning_token_limit_is_translated(model, route_effort, expected):
     service, captured = CompletionService(), []
     install_openai(service, "openai", lambda **request: captured.append(request) or completion())
-    service.complete([{"role": "user", "content": "Think"}], config("openai", "gpt-5-nano", effort="low"),
+    service.complete([{"role": "user", "content": "Think"}], config("openai", model, **route_effort),
                      {"reasoning_effort": "high", "temperature": 1, "max_tokens": 123})
-    assert captured[0]["reasoning_effort"] == "low"
+    assert captured[0]["reasoning_effort"] == expected
     assert captured[0]["max_completion_tokens"] == 123
     assert "max_tokens" not in captured[0] and "temperature" not in captured[0]
 

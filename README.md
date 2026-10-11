@@ -571,14 +571,21 @@ Only `sequences` is required at the top level. It must contain 1-30 steps; proba
 
 ### Model effort
 
-Omitting `effort` selects the lowest supported level for providers with a registered model-specific default. OpenRouter is the exception: omitting `effort` or setting it to `null` sends no reasoning-effort override, leaving the choice to OpenRouter and the upstream provider. There is no universal `easy` value. The capability registry in [model_capabilities.py](backend/app/model_capabilities.py) defines the levels the application currently supports; models without a registered effort control remain usable with the field omitted. Unsupported settings are rejected before a provider call.
+Every `openai` route accepts an `effort` field, regardless of its model name, including custom names and dated versions. Omitting the field or setting it to `null` defaults to `"minimal"`. Set it on each direct route or choice inside a probability group:
+
+```json
+{"provider": "openai", "model": "gpt-5-nano", "effort": "minimal"}
+```
+
+The Connector accepts the OpenAI effort vocabulary and forwards the selected value. OpenAI validates which levels each model supports; a model that does not support `minimal` requires a supported override, and models without effort support can return an upstream error. See the [official OpenAI reasoning documentation](https://developers.openai.com/api/docs/guides/reasoning).
+
+Other direct providers select the lowest registered level when `effort` is omitted. OpenRouter omits the reasoning-effort override when `effort` is omitted or `null`, leaving the choice to the upstream provider. The registry in [model_capabilities.py](backend/app/model_capabilities.py) defines the Connector's accepted values; invalid values such as `easy` are rejected before a provider call.
 
 The following examples show the provider mappings. Query `/api/models/capabilities` for a particular model or version.
 
-| Provider / example models | Levels in increasing order | Provider request mapping |
+| Provider / example models | Accepted configuration levels | Provider request mapping |
 | --- | --- | --- |
-| OpenAI `gpt-5`, `gpt-5-mini`, `gpt-5-nano` | `minimal`, `low`, `medium`, `high` | Chat Completions `reasoning_effort`; Responses fallback `reasoning.effort`. [OpenAI documentation](https://developers.openai.com/api/docs/models/gpt-5) |
-| OpenAI `o1`, `o3`, `o3-mini`, `o4-mini` | `low`, `medium`, `high` | Same OpenAI request fields |
+| OpenAI (any model name) | `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`; default `minimal` | Chat Completions `reasoning_effort`; Responses fallback `reasoning.effort`. OpenAI validates model-specific support. |
 | Claude Opus 4.5 and Sonnet 4.6 | `low`, `medium`, `high` | `output_config.effort`. [Claude documentation](https://platform.claude.com/docs/en/build-with-claude/effort) |
 | Claude Opus 4.6 | `low`, `medium`, `high`, `max` | `output_config.effort` |
 | Gemini 2.5 Flash / Flash-Lite | `none`, `low`, `medium`, `high` | SDK `thinking_config.thinking_budget`; REST `thinkingConfig.thinkingBudget`. [Gemini documentation](https://ai.google.dev/gemini-api/docs/thinking) |

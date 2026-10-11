@@ -1,12 +1,14 @@
-"""Shared, conservative effort capabilities for the UI and provider adapters.
+"""Shared effort settings for the UI and provider adapters.
 
-Unknown models remain usable without an effort override. Keep this registry in
-sync with the provider documentation before advertising additional levels.
+OpenAI routes accept effort independently of model names; the upstream API
+validates model-specific support. Other direct providers use a conservative
+registry that must stay in sync with their documentation.
 """
 
 import re
 from typing import Optional
 
+OPENAI_EFFORT_LEVELS = ["none", "minimal", "low", "medium", "high", "xhigh", "max"]
 OPENROUTER_EFFORT_LEVELS = ["none", "minimal", "low", "medium", "high", "xhigh", "max"]
 
 
@@ -18,16 +20,7 @@ def effort_levels(provider: str, model: str) -> list[str]:
         # translates it for the selected upstream model.
         return OPENROUTER_EFFORT_LEVELS.copy()
     if provider == "openai":
-        if model in {"gpt-5", "gpt-5-mini", "gpt-5-nano"}:
-            return ["minimal", "low", "medium", "high"]
-        if model == "gpt-5.1":
-            return ["none", "low", "medium", "high"]
-        if model == "gpt-5.2":
-            return ["none", "low", "medium", "high", "xhigh"]
-        if model == "gpt-5.6-luna":
-            return ["none", "low", "medium", "high", "xhigh", "max"]
-        if model in {"o1", "o3", "o3-mini", "o4-mini"}:
-            return ["low", "medium", "high"]
+        return OPENAI_EFFORT_LEVELS.copy()
     if provider == "claude":
         model = re.sub(r"-\d{8}$", "", model)
         if model in {"claude-opus-4-5", "claude-sonnet-4-6"}:
@@ -45,6 +38,8 @@ def effort_levels(provider: str, model: str) -> list[str]:
 
 
 def default_effort(provider: str, model: str) -> Optional[str]:
+    if provider == "openai":
+        return "minimal"
     if provider == "openrouter":
         # Let OpenRouter/the upstream provider choose unless the route opts in.
         return None

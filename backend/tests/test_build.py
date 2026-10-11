@@ -249,7 +249,8 @@ class ArtifactPreparationTests(unittest.TestCase):
 
     def test_skip_install_requires_a_prepared_isolated_kokoro_environment(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            work = Path(directory)
+            # Match checked_path's expansion of Windows short-path aliases.
+            work = Path(directory).resolve()
             with mock.patch("build.WORK", work), mock.patch("build.run") as run:
                 with self.assertRaisesRegex(BuildError, "Prepared Kokoro build environment is missing"):
                     select_kokoro_python("cpu", skip_install=True)
@@ -264,7 +265,7 @@ class ArtifactPreparationTests(unittest.TestCase):
 
     def test_cuda_build_preflight_executes_a_gpu_tensor(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            work = Path(directory)
+            work = Path(directory).resolve()
             python = work / "kokoro-venv-cuda" / "Scripts" / "python.exe"
             python.parent.mkdir(parents=True)
             python.write_bytes(b"python")
@@ -277,7 +278,7 @@ class ArtifactPreparationTests(unittest.TestCase):
 
     def test_cuda_cpu_validation_still_requires_cuda_wheels_without_probing_a_gpu(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            work = Path(directory)
+            work = Path(directory).resolve()
             python = work / "kokoro-venv-cuda" / "Scripts" / "python.exe"
             python.parent.mkdir(parents=True)
             python.write_bytes(b"python")
@@ -603,7 +604,10 @@ class FrozenStartupTests(unittest.TestCase):
                 mock.patch("build.subprocess.Popen", return_value=process) as start,
                 mock.patch("build.subprocess.run", side_effect=self.run_command) as taskkill,
                 mock.patch("build.build_opener", return_value=opener),
-                mock.patch.dict(os.environ, {"KOKORO_DEVICE": "cpu", "PODCAST_DEVICE": "cpu"}),
+                mock.patch.dict(os.environ, {
+                    "KOKORO_DEVICE": "cpu", "PODCAST_DEVICE": "cpu",
+                    "HF_HUB_CACHE": str(stage / "shared-huggingface-cache"),
+                }),
             ):
                 smoke_test(package, stage / "smoke")
             environment = start.call_args.kwargs["env"]
@@ -613,6 +617,8 @@ class FrozenStartupTests(unittest.TestCase):
             self.assertNotIn("KOKORO_BASE_URL", environment)
             self.assertNotIn("KOKORO_DEVICE", environment)
             self.assertNotIn("PODCAST_DEVICE", environment)
+            self.assertEqual(environment["HF_HUB_CACHE"], str(stage / "smoke" / "huggingface" / "hub"))
+            self.assertFalse(Path(environment["HF_HUB_CACHE"]).exists())
             self.assertEqual(environment["HF_HUB_OFFLINE"], "1")
             urls = [getattr(call.args[0], "full_url", call.args[0]) for call in opener.open.call_args_list]
             self.assertIn(f"http://127.0.0.1:{saved['react_port']}/api/speech/health", urls)

@@ -38,7 +38,6 @@ jobs:
     env:
       VERSION: ${{ needs.version.outputs.version }}
       KOKORO_DEVICE: ${{ matrix.device }}
-      PIP_NO_CACHE_DIR: '1'
       BUILD_DIRECTORY: ${{ github.workspace }}
     defaults:
       run:
@@ -90,6 +89,39 @@ jobs:
         with:
           node-version: '22'
           package-manager-cache: false
+
+      - name: Configure download cache directories
+        run: |
+          # Keep cache paths independent of CUDA's run-specific build directory.
+          $cacheRoot = Join-Path $env:RUNNER_TEMP 'connector-cache'
+          @(
+            "PIP_CACHE_DIR=$cacheRoot\pip-$env:KOKORO_DEVICE"
+            "NPM_CONFIG_CACHE=$cacheRoot\npm"
+            "HF_HUB_CACHE=$cacheRoot\huggingface"
+          ) | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      # Reuse downloads while still installing dependencies and rebuilding.
+      - name: Cache Python package downloads
+        uses: actions/cache@v6
+        with:
+          path: ${{ env.PIP_CACHE_DIR }}
+          key: ${{ runner.os }}-${{ runner.arch }}-windows2022-pip-py312-${{ matrix.device }}-v1-${{ hashFiles('build.py', 'backend/requirements*.txt', 'python-kokoro/requirements*.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-windows2022-pip-py312-${{ matrix.device }}-v1-
+
+      - name: Cache npm package downloads
+        uses: actions/cache@v6
+        with:
+          path: ${{ env.NPM_CONFIG_CACHE }}
+          key: ${{ runner.os }}-npm-node22-v1-${{ hashFiles('frontend/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-npm-node22-v1-
+
+      - name: Cache Kokoro model downloads
+        uses: actions/cache@v6
+        with:
+          path: ${{ env.HF_HUB_CACHE }}
+          key: ${{ runner.os }}-kokoro-assets-v1-${{ hashFiles('python-kokoro/model_assets.py', 'python-kokoro/prepare_assets.py') }}
 
       # Both variants run frontend tests and offline speech smoke tests.
       # CUDA is tested on CPU here; its delivered runtime profile remains CUDA.

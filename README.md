@@ -371,6 +371,8 @@ python build.py
 .\build.bat --skip-install
 # Build a CPU-only bundle explicitly:
 .\build.bat --kokoro-device cpu
+# Package CUDA on a build machine without a GPU:
+.\build.bat --kokoro-device cuda --cuda-smoke-device cpu
 ```
 
 The builder validates the root `port_mapping.json`, uses the active Python environment or the repository `.venv` for the API, and prepares a separate Python 3.12 build environment for Kokoro. It installs API/PyInstaller and npm dependencies, runs frontend tests, builds React, and packages both services with PyInstaller. The default speech bundle uses CUDA PyTorch and requires a working NVIDIA GPU; `--kokoro-device cpu` creates a CPU-only bundle. The development Kokoro environment is preserved. Before publishing, the builder checks the frontend, proxied API, and bundled speech service with isolated test storage, synthesizes speech offline, and verifies the model tensors run on the selected device:
@@ -405,13 +407,17 @@ The packaged defaults in user settings are frontend **5130**, API **8130**, and 
 
 An optional `.env` beside `server.exe` supports the provider keys, storage overrides, and launcher settings. Ports come from the saved JSON, with CLI port flags taking precedence for that run. For the bind address, CLI options take precedence over process environment variables, then `.env`, then the generated `runtime.json` profile. Relative routing `CONFIG_PATH` and explicit storage paths resolve beside the executable. Rebuilding replaces application artifacts, including `port_mapping.json`, while preserving per-user settings and each folder's existing `.env`, `config.json`, and other user files. Changes made only to an installed mapping are replaced on rebuild; edit the repository mapping to carry those defaults into future builds.
 
+For CUDA packaging on a machine without a GPU, add `--cuda-smoke-device cpu`. This retains CUDA-enabled PyTorch and checks the complete frozen application and offline speech on CPU, temporarily changing and then restoring each package's speech profile. The delivered package still requests CUDA. GPU kernel execution is not tested by this mode; ordinary local CUDA builds keep their GPU preflight and GPU speech tests.
+
 ### Automated GitHub releases
 
 The [Build and release workflow](.github/workflows/release.yml) runs on every push to `main`, including merged pull requests. It can also be started manually from the Actions tab on `main`. Runs are queued so incoming merges do not cancel an active build.
 
-The workflow builds Windows x64 packages with CPU-only Kokoro, runs frontend and backend tests, and smoke-tests both portable packages before publishing a GitHub Release. Release tags and ZIP filenames use the UTC build time in `{YYYY}.{mm}.{dd}{HH}{mm}` format, with zero-padded fields and a 24-hour clock; for example, `2026.10.111430` is October 11, 2026 at 14:30 UTC.
+The workflow builds Windows x64 packages with both CPU-only and CUDA 12.8 Kokoro in separate jobs. Both variants run frontend and backend tests and smoke-test the complete portable packages. Hosted Windows runners have no NVIDIA GPU, so CUDA packages use `--cuda-smoke-device cpu` for CI validation while retaining CUDA in the delivered runtime profile. Release tags and all archive filenames share one UTC version in `{YYYY}.{mm}.{dd}{HH}{mm}` format, with zero-padded fields and a 24-hour clock; for example, `2026.10.111430` is October 11, 2026 at 14:30 UTC.
 
-Each release includes `the-connector-<version>-windows-x64-cpu-debug.zip` for local access and `the-connector-<version>-windows-x64-cpu-release.zip` for LAN access. Extract the entire archive and start `run.bat` inside its `Debug` or `Release` folder. Releases target the exact commit that triggered the workflow and use the built-in `GITHUB_TOKEN`; no additional release secret is needed.
+Each release includes `the-connector-<version>-windows-x64-<device>-<profile>.zip`, where `<device>` is `cpu` or `cuda` and `<profile>` is `debug` for local access or `release` for LAN access. Choose CUDA for a compatible NVIDIA GPU and driver; CPU packages remain CPU-only even on GPU machines. The CUDA variant verifies GPU availability and a CUDA operation at startup and stops if CUDA cannot run.
+
+Extract the entire archive and start `run.bat` inside its `Debug` or `Release` folder. Archives larger than 1900 MiB are split into `.zip.001`, `.zip.002`, and further parts to stay below GitHub's 2 GiB per-file limit. Download all parts of the chosen archive into the same folder and extract `.zip.001` with [7-Zip](https://www.7-zip.org/). The archive helper includes application artifacts and excludes top-level `.env` files and user data. Releases target the exact commit that triggered the workflow and use the built-in `GITHUB_TOKEN`; no additional release secret is needed.
 
 ### Remaining differences from `sample-react-python-project`
 

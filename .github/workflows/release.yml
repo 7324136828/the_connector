@@ -15,21 +15,69 @@ concurrency:
   queue: max
 
 jobs:
-  build:
-    name: Build Windows binaries
+  version:
+    name: Choose release version
     if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Format UTC build time
+        id: version
+        run: echo "version=$(date -u +'%Y.%m.%d%H%M')" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build Windows binaries (${{ matrix.device }})
+    needs: version
     runs-on: windows-2022
     timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        device: [cpu, cuda]
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      KOKORO_DEVICE: ${{ matrix.device }}
+      PIP_NO_CACHE_DIR: '1'
+      BUILD_DIRECTORY: ${{ github.workspace }}
     defaults:
       run:
         shell: pwsh
-    outputs:
-      version: ${{ steps.package.outputs.version }}
     steps:
       - name: Check out the merged commit
         uses: actions/checkout@v7
         with:
           persist-credentials: false
+
+      # CUDA wheels, freezer output, and both packages need substantial space.
+      # These preinstalled IDEs are unused by the Python/Node build.
+      - name: Free disk space for CUDA packaging
+        if: matrix.device == 'cuda'
+        run: |
+          if ($env:RUNNER_ENVIRONMENT -ne 'github-hosted') {
+            throw 'Disk cleanup is only allowed on an ephemeral GitHub-hosted runner.'
+          }
+          foreach ($directory in @(
+            'C:\Program Files\Microsoft Visual Studio',
+            'C:\Program Files (x86)\Microsoft Visual Studio'
+          )) {
+            if (Test-Path -LiteralPath $directory) {
+              $resolved = (Resolve-Path -LiteralPath $directory).Path
+              if ($resolved -ne $directory) { throw "Unexpected cleanup path: $resolved" }
+              Remove-Item -LiteralPath $resolved -Recurse -Force -ErrorAction Stop
+            }
+          }
+          # The checkout can be on D:, so build CUDA on the C: drive we freed.
+          $buildDirectory = Join-Path 'C:\' "connector-build-$env:GITHUB_RUN_ID"
+          if (Test-Path -LiteralPath $buildDirectory) { throw "Build directory already exists: $buildDirectory" }
+          New-Item -ItemType Directory -Path $buildDirectory | Out-Null
+          foreach ($entry in (Get-ChildItem -LiteralPath $env:GITHUB_WORKSPACE -Force)) {
+            if ($entry.Name -ne '.git') {
+              Copy-Item -LiteralPath $entry.FullName -Destination $buildDirectory -Recurse -Force
+            }
+          }
+          "BUILD_DIRECTORY=$buildDirectory" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Get-PSDrive C | Select-Object Used, Free
 
       - name: Set up Python
         uses: actions/setup-python@v7
@@ -43,51 +91,42 @@ jobs:
           node-version: '22'
           package-manager-cache: false
 
-      # The builder runs frontend tests and smoke-tests both portable packages.
-      # Hosted Windows runners have no CUDA GPU, so bundle CPU speech explicitly.
+      # Both variants run frontend tests and offline speech smoke tests.
+      # CUDA is tested on CPU here; its delivered runtime profile remains CUDA.
       - name: Build and smoke-test portable packages
-        run: python -u build.py --kokoro-device cpu
+        working-directory: ${{ env.BUILD_DIRECTORY }}
+        run: |
+          if ($env:KOKORO_DEVICE -eq 'cuda') {
+            python -u build.py --kokoro-device cuda --cuda-smoke-device cpu
+          } else {
+            python -u build.py --kokoro-device cpu
+          }
 
       - name: Test backend
+        working-directory: ${{ env.BUILD_DIRECTORY }}
         run: .\.venv\Scripts\python.exe -m pytest backend/tests -q
 
-      - name: Version and archive portable packages
-        id: package
-        shell: python
+      - name: Test speech service
+        working-directory: ${{ env.BUILD_DIRECTORY }}
         run: |
-          import os
-          import shutil
-          from datetime import datetime, timezone
-          from pathlib import Path
+          & ".\build\kokoro-venv-$env:KOKORO_DEVICE\Scripts\python.exe" -m unittest discover -s python-kokoro -p test_server.py -q
 
-          version = datetime.now(timezone.utc).strftime("%Y.%m.%d%H%M")
-          for profile in ("Debug", "Release"):
-              package = Path("dist") / profile
-              for required in (
-                  "server.exe", "python-kokoro/kokoro.exe", "public/index.html",
-                  "run.bat", "runtime.json", "port_mapping.json", "config.json",
-              ):
-                  if not (package / required).is_file():
-                      raise FileNotFoundError(package / required)
-              archive = Path("dist") / f"the-connector-{version}-windows-x64-cpu-{profile.lower()}"
-              shutil.make_archive(str(archive), "zip", root_dir="dist", base_dir=profile)
-
-          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
-              output.write(f"version={version}\n")
-          print(f"Release version: {version} (UTC)")
+      - name: Archive portable packages
+        working-directory: ${{ env.BUILD_DIRECTORY }}
+        run: python release_assets.py --version $env:VERSION --device $env:KOKORO_DEVICE
 
       - name: Upload release assets
         uses: actions/upload-artifact@v7
         with:
-          name: windows-binaries-${{ steps.package.outputs.version }}
-          path: dist/*.zip
+          name: windows-binaries-${{ needs.version.outputs.version }}-${{ matrix.device }}
+          path: ${{ env.BUILD_DIRECTORY }}/dist/release-assets/*
           if-no-files-found: error
           compression-level: 0
           retention-days: 7
 
   release:
     name: Publish GitHub release
-    needs: build
+    needs: [version, build]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -96,16 +135,25 @@ jobs:
       - name: Download release assets
         uses: actions/download-artifact@v8
         with:
-          name: windows-binaries-${{ needs.build.outputs.version }}
+          pattern: windows-binaries-${{ needs.version.outputs.version }}-*
+          merge-multiple: true
           path: dist
 
       - name: Publish versioned binaries
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VERSION: ${{ needs.build.outputs.version }}
+          VERSION: ${{ needs.version.outputs.version }}
         run: |
-          gh release create "$VERSION" dist/*.zip \
+          cat > release-notes.md <<'EOF'
+          Choose CPU packages for machines without CUDA, or CUDA packages for a compatible NVIDIA GPU and driver. Debug binds locally; Release allows LAN access.
+
+          Extract the complete package and start run.bat inside Debug or Release. If an archive has numbered .zip.001, .zip.002 parts, download all parts into the same folder and extract .zip.001 with 7-Zip.
+
+          CUDA packages are smoke-tested on CPU in CI. GPU execution is checked when the CUDA package starts on your machine.
+          EOF
+          gh release create "$VERSION" dist/* \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
             --title "The Connector $VERSION" \
+            --notes-file release-notes.md \
             --generate-notes

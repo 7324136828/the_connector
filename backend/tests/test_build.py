@@ -24,6 +24,7 @@ from build import (
     pyinstaller_command,
     smoke_test,
     select_kokoro_python,
+    smoke_test_cuda_on_cpu,
     validate_artifacts,
     validate_kokoro_bundle,
     validate_kokoro_health,
@@ -274,12 +275,30 @@ class ArtifactPreparationTests(unittest.TestCase):
             self.assertIn("torch.cuda.is_available()", preflight[2])
             self.assertIn("torch.ones(1, device='cuda').add_(1).item()", preflight[2])
 
+    def test_cuda_cpu_validation_still_requires_cuda_wheels_without_probing_a_gpu(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            work = Path(directory)
+            python = work / "kokoro-venv-cuda" / "Scripts" / "python.exe"
+            python.parent.mkdir(parents=True)
+            python.write_bytes(b"python")
+            with mock.patch("build.WORK", work), mock.patch("build.run") as run:
+                self.assertEqual(
+                    select_kokoro_python("cuda", skip_install=True, require_gpu=False), python,
+                )
+            checks = [call.args[0][2] for call in run.call_args_list]
+            self.assertTrue(any("bool(torch.version.cuda) == True" in check for check in checks))
+            self.assertFalse(any("torch.cuda.is_available()" in check or "device='cuda'" in check
+                                 for check in checks))
+
     @unittest.skipUnless(os.name == "nt", "The portable build requires Windows")
     def test_build_defaults_to_cuda_and_cpu_is_explicit(self) -> None:
         from build import main
 
-        for arguments, expected in ((["--skip-install"], "cuda"),
-                                    (["--skip-install", "--kokoro-device", "cpu"], "cpu")):
+        for arguments, expected, require_gpu in (
+            (["--skip-install"], "cuda", True),
+            (["--skip-install", "--kokoro-device", "cpu"], "cpu", True),
+            (["--skip-install", "--kokoro-device", "cuda", "--cuda-smoke-device", "cpu"], "cuda", False),
+        ):
             with self.subTest(device=expected), tempfile.TemporaryDirectory() as directory:
                 with (
                     mock.patch("build.ROOT", Path(directory)),
@@ -290,7 +309,7 @@ class ArtifactPreparationTests(unittest.TestCase):
                 ):
                     with self.assertRaisesRegex(BuildError, "test stop"):
                         main(arguments)
-                    select.assert_called_once_with(expected, skip_install=True)
+                    select.assert_called_once_with(expected, skip_install=True, require_gpu=require_gpu)
 
 
 class PublicationTests(unittest.TestCase):
@@ -455,6 +474,44 @@ class PublicationTests(unittest.TestCase):
 
 
 class FrozenStartupTests(unittest.TestCase):
+    def test_cuda_cpu_smoke_restores_the_exact_cuda_profile_on_success_and_failure(self) -> None:
+        for fail in (False, True):
+            with self.subTest(fail=fail), tempfile.TemporaryDirectory() as directory:
+                stage = Path(directory)
+                package = stage / "packages" / "Debug"
+                bundle = package / "python-kokoro"
+                write_kokoro_bundle(bundle, device="cuda")
+                profile = bundle / "runtime.json"
+                original = b'\xef\xbb\xbf{ "device": "cuda", "preserved": true }\r\n'
+                profile.write_bytes(original)
+
+                def check_cpu_override(actual_package, workspace):
+                    self.assertEqual(actual_package, package)
+                    self.assertEqual(workspace, stage / "smoke")
+                    self.assertEqual(kokoro_bundle_device(bundle), "cpu")
+                    self.assertTrue((bundle / "_internal" / "torch" / "lib" / "torch_cuda.dll").is_file())
+                    if fail:
+                        raise BuildError("speech failed")
+
+                with mock.patch("build.smoke_test", side_effect=check_cpu_override) as smoke:
+                    if fail:
+                        with self.assertRaisesRegex(BuildError, "speech failed"):
+                            smoke_test_cuda_on_cpu(package, stage / "smoke")
+                    else:
+                        smoke_test_cuda_on_cpu(package, stage / "smoke")
+                    smoke.assert_called_once()
+                self.assertEqual(profile.read_bytes(), original)
+                validate_kokoro_bundle(bundle)
+
+    def test_cuda_cpu_smoke_rejects_a_cpu_only_bundle(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            package = Path(directory) / "Debug"
+            write_kokoro_bundle(package / "python-kokoro", device="cpu")
+            with mock.patch("build.smoke_test") as smoke:
+                with self.assertRaisesRegex(BuildError, "requires a CUDA bundle"):
+                    smoke_test_cuda_on_cpu(package, Path(directory) / "smoke")
+                smoke.assert_not_called()
+
     @staticmethod
     def run_command(command, **kwargs):
         if "--initialize-settings" in command:

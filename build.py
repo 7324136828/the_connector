@@ -141,7 +141,14 @@ def pyinstaller_command(python: Path, stage: Path) -> list[str | Path]:
     return command
 
 
-def select_kokoro_python(device: str, *, skip_install: bool) -> Path:
+def pip_cache_options() -> list[str | Path]:
+    # Explicit --cache-dir would otherwise override the CI environment setting.
+    if os.environ.get("PIP_NO_CACHE_DIR") == "1":
+        return ["--no-cache-dir"]
+    return ["--cache-dir", WORK / "pip-cache"]
+
+
+def select_kokoro_python(device: str, *, skip_install: bool, require_gpu: bool = True) -> Path:
     """Keep the speech freezer and PyTorch out of the API's Python environment."""
     environment = checked_path(WORK / f"kokoro-venv-{device}", WORK)
     python = environment / "Scripts" / "python.exe"
@@ -161,18 +168,18 @@ def select_kokoro_python(device: str, *, skip_install: bool) -> Path:
          "'The isolated Kokoro build environment must use Python 3.12'"])
     if not skip_install:
         if device == "cuda":
-            run([python, "-m", "pip", "install", "--cache-dir", WORK / "pip-cache",
+            run([python, "-m", "pip", "install", *pip_cache_options(),
                  "-r", KOKORO / "requirements-cuda.txt"])
         else:
-            run([python, "-m", "pip", "install", "--cache-dir", WORK / "pip-cache",
+            run([python, "-m", "pip", "install", *pip_cache_options(),
                  "torch==2.11.0", "--index-url", "https://download.pytorch.org/whl/cpu"])
-        run([python, "-m", "pip", "install", "--cache-dir", WORK / "pip-cache",
+        run([python, "-m", "pip", "install", *pip_cache_options(),
              "-r", KOKORO / "requirements.txt", "-r", KOKORO / "requirements-build.txt"])
     expected_cuda = device == "cuda"
     run([python, "-c", "import kokoro, torch, PyInstaller; "
          f"assert bool(torch.version.cuda) == {expected_cuda!r}, "
          "'Kokoro build environment has the wrong CPU/CUDA PyTorch build'"])
-    if expected_cuda:
+    if expected_cuda and require_gpu:
         # Loading CUDA-enabled wheels alone does not prove the local driver/GPU
         # can execute them. Fail before freezing a package that cannot run.
         run([python, "-c", "import torch; "
@@ -497,6 +504,25 @@ def smoke_test(package: Path, workspace: Path, *, timeout: float = 120.0) -> Non
                     process.wait(timeout=10)
 
 
+def smoke_test_cuda_on_cpu(package: Path, workspace: Path) -> None:
+    """Exercise the CUDA bundle without a GPU, restoring its delivered device.
+
+    This verifies frozen imports, listeners, and offline speech on CPU. CUDA
+    kernels still need validation on a machine with a compatible NVIDIA GPU.
+    """
+    bundle = package / "python-kokoro"
+    if kokoro_bundle_device(bundle) != "cuda":
+        raise BuildError("CPU validation of a CUDA package requires a CUDA bundle")
+    profile = bundle / "runtime.json"
+    original = profile.read_bytes()
+    print(f"[build] Testing CUDA bundle on CPU; GPU execution is not tested: {package.name}", flush=True)
+    try:
+        profile.write_text(json.dumps({"device": "cpu"}) + "\n", encoding="ascii")
+        smoke_test(package, workspace)
+    finally:
+        profile.write_bytes(original)
+
+
 def publish_artifacts(stage: Path, *, repository: Path = ROOT) -> None:
     """Publish both profiles together, preserving their data and local settings."""
     output = repository / "dist"
@@ -568,6 +594,11 @@ def main(argv: list[str] | None = None) -> int:
         "--kokoro-device", choices=("cpu", "cuda"), default="cuda",
         help="Bundle CUDA PyTorch (default); use cpu explicitly for machines without a CUDA GPU",
     )
+    parser.add_argument(
+        "--cuda-smoke-device", choices=("cpu", "cuda"), default="cuda",
+        help="Test CUDA packages on cuda (default), or on cpu for CI without a GPU; "
+             "the delivered CUDA package still requires a GPU",
+    )
     options = parser.parse_args(argv)
     if os.name != "nt":
         raise BuildError("Build the Windows executable on Windows")
@@ -584,9 +615,12 @@ def main(argv: list[str] | None = None) -> int:
     checked_path(WORK, ROOT)
     WORK.mkdir(exist_ok=True)
     python = select_python()
-    kokoro_python = select_kokoro_python(options.kokoro_device, skip_install=options.skip_install)
+    kokoro_python = select_kokoro_python(
+        options.kokoro_device, skip_install=options.skip_install,
+        require_gpu=options.cuda_smoke_device == "cuda",
+    )
     if not options.skip_install:
-        run([python, "-m", "pip", "install", "--cache-dir", WORK / "pip-cache",
+        run([python, "-m", "pip", "install", *pip_cache_options(),
              "-r", BACKEND / "requirements.txt",
              "-r", BACKEND / "requirements-build.txt"])
         run([npm, "ci", "--cache", WORK / "npm-cache"], cwd=FRONTEND)
@@ -622,7 +656,11 @@ def main(argv: list[str] | None = None) -> int:
         for profile, host in PROFILES.items():
             validate_artifacts(artifacts / profile, host=host)
             run([artifacts / profile / "server.exe", "--help"])
-            smoke_test(artifacts / profile, stage / f"smoke-{profile.lower()}")
+            if options.kokoro_device == "cuda" and options.cuda_smoke_device == "cpu":
+                smoke_test_cuda_on_cpu(artifacts / profile, stage / f"smoke-{profile.lower()}")
+            else:
+                smoke_test(artifacts / profile, stage / f"smoke-{profile.lower()}")
+            validate_kokoro_bundle(artifacts / profile / "python-kokoro")
         publish_artifacts(artifacts)
         published = True
     finally:
